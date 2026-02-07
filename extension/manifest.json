@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "AI Feed Detector",
+  "description": "Detect likely AI-generated images in Instagram feeds and overlay risk indicators.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://instagram.com/*"
+  ],
+  "background": {
+    "service_worker": "background/serviceWorker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": [
+        "shared/utils.js",
+        "content/dom.js",
+        "content/observer.js",
+        "content/extractMedia.js",
+        "content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "AI Feed Detector",
+    "default_popup": "popup/popup.html"
+  }
+}
