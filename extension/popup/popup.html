@@ -37,6 +37,29 @@
 
       <section class="card">
         <h2>Controls</h2>
+        <div class="mode-block">
+          <span class="mode-label">Detection Mode</span>
+          <div class="mode-switch" role="radiogroup" aria-label="Detection Mode">
+            <button
+              id="mode-feed"
+              class="mode-button"
+              type="button"
+              role="radio"
+              aria-checked="true"
+            >
+              Feed Mode
+            </button>
+            <button
+              id="mode-rectangle"
+              class="mode-button"
+              type="button"
+              role="radio"
+              aria-checked="false"
+            >
+              Rectangle Mode
+            </button>
+          </div>
+        </div>
         <label class="toggle-row">
           <span>Extension Enabled</span>
           <input id="toggle-enabled" type="checkbox" />

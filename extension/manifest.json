@@ -7,10 +7,8 @@
     "storage"
   ],
   "host_permissions": [
-    "https://www.instagram.com/*",
-    "https://instagram.com/*",
-    "https://*.cdninstagram.com/*",
-    "https://*.fbcdn.net/*",
+    "http://*/*",
+    "https://*/*",
     "http://localhost:3500/*"
   ],
   "background": {
@@ -20,8 +18,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.instagram.com/*",
-        "https://instagram.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "shared/utils.js",
@@ -29,6 +27,7 @@
         "content/observer.js",
         "content/extractMedia.js",
         "content/overlay.js",
+        "content/rectangleOverlay.js",
         "content/content.js", 
         "content/riskRail.js"
       ],

@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
   extensionEnabled: true,
   showScoreOverlay: true,
   showRiskRail: true,
+  detectionMode: "feed",
 };
 
 const DEFAULT_STATS = {
@@ -25,6 +26,8 @@ const ui = {
   toggleEnabled: document.getElementById("toggle-enabled"),
   toggleScoreOverlay: document.getElementById("toggle-score-overlay"),
   toggleRiskRail: document.getElementById("toggle-risk-rail"),
+  modeFeed: document.getElementById("mode-feed"),
+  modeRectangle: document.getElementById("mode-rectangle"),
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -50,18 +53,19 @@ function formatLastScan(lastScanAt) {
  */
 function renderSettings() {
   const isMasterEnabled = Boolean(currentSettings.extensionEnabled);
+  const mode = currentSettings.detectionMode === "rectangle" ? "rectangle" : "feed";
+  const areFeedControlsInteractive = isMasterEnabled && mode === "feed";
   
   // Set master toggle state
   ui.toggleEnabled.checked = isMasterEnabled;
 
-  // Sub-toggles: 
-  // 1. Visually uncheck if master is off, otherwise show saved state
-  ui.toggleScoreOverlay.checked = isMasterEnabled ? Boolean(currentSettings.showScoreOverlay) : false;
-  ui.toggleRiskRail.checked = isMasterEnabled ? Boolean(currentSettings.showRiskRail) : false;
+  // Feed-only toggles keep stored values but become inactive outside feed mode.
+  ui.toggleScoreOverlay.checked = Boolean(currentSettings.showScoreOverlay);
+  ui.toggleRiskRail.checked = Boolean(currentSettings.showRiskRail);
 
-  // 2. Disable interaction if master is off
-  ui.toggleScoreOverlay.disabled = !isMasterEnabled;
-  ui.toggleRiskRail.disabled = !isMasterEnabled;
+  // Disable interaction when extension is paused or rectangle mode is active.
+  ui.toggleScoreOverlay.disabled = !areFeedControlsInteractive;
+  ui.toggleRiskRail.disabled = !areFeedControlsInteractive;
 
   // 3. Visual feedback for rows (greying out)
   const subToggles = [ui.toggleScoreOverlay, ui.toggleRiskRail];
@@ -69,14 +73,25 @@ function renderSettings() {
     // Looks for a container div with class 'setting-row' or similar
     const container = toggle.closest('.setting-row') || toggle.parentElement;
     if (container) {
-      container.style.opacity = isMasterEnabled ? "1" : "0.5";
-      container.style.pointerEvents = isMasterEnabled ? "auto" : "none";
+      container.style.opacity = areFeedControlsInteractive ? "1" : "0.5";
+      container.style.pointerEvents = areFeedControlsInteractive ? "auto" : "none";
       container.style.transition = "opacity 0.2s ease";
     }
   });
 
+  const modeButtons = [ui.modeFeed, ui.modeRectangle];
+  modeButtons.forEach((button) => {
+    button.disabled = !isMasterEnabled;
+  });
+  ui.modeFeed.classList.toggle("is-active", mode === "feed");
+  ui.modeRectangle.classList.toggle("is-active", mode === "rectangle");
+  ui.modeFeed.setAttribute("aria-checked", String(mode === "feed"));
+  ui.modeRectangle.setAttribute("aria-checked", String(mode === "rectangle"));
+
   ui.statusText.textContent = isMasterEnabled
-    ? "Active on supported pages"
+    ? mode === "rectangle"
+      ? "Rectangle mode armed"
+      : "Feed mode active"
     : "Paused";
 }
 
@@ -103,14 +118,60 @@ function saveStats() {
   });
 }
 
+function notifyActiveTabSettingsChanged() {
+  if (!chrome.tabs || typeof chrome.tabs.query !== "function") {
+    return;
+  }
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (chrome.runtime.lastError) {
+      return;
+    }
+
+    const activeTabId = tabs?.[0]?.id;
+    if (typeof activeTabId !== "number") {
+      return;
+    }
+
+    chrome.tabs.sendMessage(
+      activeTabId,
+      {
+        type: "AIFD_SETTINGS_UPDATED",
+        payload: currentSettings,
+      },
+      () => {
+        // It is normal for pages without an injected content script to throw here.
+        void chrome.runtime.lastError;
+      }
+    );
+  });
+}
+
 function notifySettingsChanged() {
   chrome.runtime.sendMessage({
     type: "AIFD_SETTINGS_UPDATED",
     payload: currentSettings,
   });
+  notifyActiveTabSettingsChanged();
 }
 
 function attachHandlers() {
+  async function setDetectionMode(mode) {
+    if (!ui.toggleEnabled.checked) {
+      return;
+    }
+    if (mode !== "feed" && mode !== "rectangle") {
+      return;
+    }
+    if (currentSettings.detectionMode === mode) {
+      return;
+    }
+    currentSettings.detectionMode = mode;
+    await saveSettings();
+    renderSettings();
+    notifySettingsChanged();
+  }
+
   ui.toggleEnabled.addEventListener("change", async (event) => {
     currentSettings.extensionEnabled = event.target.checked;
     await saveSettings();
@@ -129,6 +190,9 @@ function attachHandlers() {
     await saveSettings();
     notifySettingsChanged();
   });
+
+  ui.modeFeed.addEventListener("click", () => setDetectionMode("feed"));
+  ui.modeRectangle.addEventListener("click", () => setDetectionMode("rectangle"));
 
   ui.resetStats.addEventListener("click", async () => {
     currentStats = { ...DEFAULT_STATS };

@@ -110,7 +110,9 @@ async function processOneItem(item, tabId) {
       type: "RENDER_BADGE",
       payload: {
         ...normalizedResult,
-        url: item.media_url ||item.url
+        url: item.media_url || item.url,
+        source: item.source || null,
+        selectionId: item.selectionId || item.selection_id || null,
       },
     });
   } catch (error) {

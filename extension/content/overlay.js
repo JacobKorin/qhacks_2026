@@ -68,6 +68,53 @@ window.AIFeedDetectorOverlay = (function() {
             .bg-human { background: var(--aifd-accent-soft); color: #134e4a; border-color: #99f6e4; }
             .bg-warn { background: var(--aifd-warn-soft); color: #92400e; border-color: #fde68a; }
 
+            .aifd-aggregate-badge {
+                position: fixed;
+                top: 14px;
+                right: 14px;
+                width: 220px;
+                background: var(--aifd-card);
+                border: 1px solid var(--aifd-line);
+                border-radius: 12px;
+                padding: 12px;
+                box-shadow: 0 8px 18px rgba(0,0,0,0.16);
+                font-family: "Segoe UI", "Aptos", sans-serif;
+                z-index: 2147483647;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .aifd-aggregate-title {
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.02em;
+                color: var(--aifd-muted);
+            }
+
+            .aifd-aggregate-score {
+                font-size: 28px;
+                line-height: 1;
+                font-weight: 800;
+                color: var(--aifd-ink);
+            }
+
+            .aifd-aggregate-meta {
+                font-size: 12px;
+                color: var(--aifd-muted);
+            }
+
+            .aifd-aggregate-status {
+                margin-top: 4px;
+                padding: 6px 8px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 700;
+                border: 1px solid transparent;
+                text-align: center;
+            }
+            
             @keyframes aifd-fade-in {
                 from { opacity: 0; transform: translateX(-10px); }
                 to { opacity: 1; transform: translateX(0); }
@@ -119,6 +166,51 @@ window.AIFeedDetectorOverlay = (function() {
             `;
             postContainer.appendChild(badge);
             console.log(`[AIFD] Badge rendered for ${mediaElement.tagName} (${hash.substring(0,8)})`);
+        },
+
+        renderAggregateBadge: function(options) {
+            const averageScore = Math.max(0, Math.min(100, Number(options?.averageScore || 0)));
+            const uniqueScannedCount = Math.max(
+                0,
+                Number(options?.uniqueScannedCount ?? options?.totalCount ?? 0)
+            );
+            const selectedCount = Math.max(
+                0,
+                Number(options?.selectedCount ?? uniqueScannedCount)
+            );
+            const aiLikelyCount = Math.max(0, Number(options?.aiLikelyCount || 0));
+
+            let statusLabel = "Likely Human";
+            let statusClass = "bg-human";
+            if (averageScore >= 75) {
+                statusLabel = "Likely AI";
+                statusClass = "bg-ai";
+            } else if (averageScore >= 60) {
+                statusLabel = "Mixed / Unclear";
+                statusClass = "bg-warn";
+            }
+
+            let badge = document.getElementById("aifd-aggregate-badge");
+            if (!badge) {
+                badge = document.createElement("div");
+                badge.id = "aifd-aggregate-badge";
+                badge.className = "aifd-aggregate-badge";
+                document.body.appendChild(badge);
+            }
+
+            badge.innerHTML = `
+                <span class="aifd-aggregate-title">Selection Average</span>
+                <span class="aifd-aggregate-score">${averageScore.toFixed(1)}%</span>
+                <span class="aifd-aggregate-meta">Selected: ${selectedCount} | Scanned: ${uniqueScannedCount} | AI-likely: ${aiLikelyCount}</span>
+                <div class="aifd-aggregate-status ${statusClass}">${statusLabel}</div>
+            `;
+        },
+
+        clearAggregateBadge: function() {
+            const badge = document.getElementById("aifd-aggregate-badge");
+            if (badge) {
+                badge.remove();
+            }
         }
     };
 })();

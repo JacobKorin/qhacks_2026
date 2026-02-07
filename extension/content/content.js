@@ -10,12 +10,320 @@
     extensionEnabled: true,
     showScoreOverlay: true,
     showRiskRail: true,
+    detectionMode: "feed",
   };
   const pageUrl = window.location.href;
   let currentSettings = { ...DEFAULT_SETTINGS };
   const detectionResultsByHash = new Map();
+  let rectangleOverlayController = null;
+  let latestRectangleSelection = null;
+  const rectangleScanBatches = new Map();
+  const RECTANGLE_AI_THRESHOLD = 75;
 
   console.log("[AI Feed Detector] Content script loaded:", pageUrl);
+
+  function toPercentScore(score) {
+    const numeric = Number(score || 0);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    const percent = numeric > 1 ? numeric : numeric * 100;
+    return Math.max(0, Math.min(100, percent));
+  }
+
+  function renderRectangleAggregateBadge(summary) {
+    if (!summary) {
+      return;
+    }
+
+    if (
+      window.AIFeedDetectorOverlay &&
+      typeof window.AIFeedDetectorOverlay.renderAggregateBadge === "function"
+    ) {
+      window.AIFeedDetectorOverlay.renderAggregateBadge(summary);
+      return;
+    }
+
+    console.log("[AIFD] Aggregate badge API unavailable.");
+  }
+
+  function clearRectangleAggregateBadge() {
+    if (
+      window.AIFeedDetectorOverlay &&
+      typeof window.AIFeedDetectorOverlay.clearAggregateBadge === "function"
+    ) {
+      window.AIFeedDetectorOverlay.clearAggregateBadge();
+    }
+  }
+
+  async function exitRectangleMode() {
+    if (currentSettings.detectionMode !== "rectangle") {
+      return;
+    }
+
+    const nextSettings = {
+      ...currentSettings,
+      detectionMode: "feed",
+    };
+
+    applySettings(nextSettings);
+
+    try {
+      await chrome.storage.local.set({
+        [SETTINGS_KEY]: nextSettings,
+      });
+    } catch (error) {
+      console.warn("[AIFD] Failed to persist rectangle exit mode:", error);
+    }
+
+    try {
+      chrome.runtime.sendMessage({
+        type: "AIFD_SETTINGS_UPDATED",
+        payload: nextSettings,
+      });
+    } catch (error) {
+      console.warn("[AIFD] Failed to broadcast rectangle exit mode:", error);
+    }
+  }
+
+  function handleRectangleDetectionResult(payload) {
+    const selectionId = payload?.selectionId;
+    if (!selectionId) {
+      return false;
+    }
+
+    const batch = rectangleScanBatches.get(selectionId);
+    if (!batch) {
+      return false;
+    }
+
+    const hash = payload?.hash || "";
+    if (hash && batch.receivedHashes.has(hash)) {
+      return true;
+    }
+
+    if (hash) {
+      batch.receivedHashes.add(hash);
+    }
+
+    const scorePercent = toPercentScore(payload?.score);
+    batch.receivedCount += 1;
+    batch.scorePercentTotal += scorePercent;
+    if (payload?.isAI) {
+      batch.aiLikelyCount += 1;
+    }
+
+    if (batch.receivedCount < batch.expectedCount) {
+      return true;
+    }
+
+    const averageScore =
+      batch.receivedCount > 0
+        ? batch.scorePercentTotal / batch.receivedCount
+        : 0;
+
+    renderRectangleAggregateBadge({
+      averageScore,
+      totalCount: batch.receivedCount,
+      uniqueScannedCount: batch.receivedCount,
+      selectedCount: batch.selectedCount,
+      aiLikelyCount: batch.aiLikelyCount,
+      isLikelyAI: averageScore >= RECTANGLE_AI_THRESHOLD,
+      bounds: batch.bounds || null,
+    });
+
+    rectangleScanBatches.delete(selectionId);
+    return true;
+  }
+
+  function extractRectangleMediaItems(imageElements) {
+    const utils = window.AIFeedDetectorUtils;
+    if (!utils || !Array.isArray(imageElements) || imageElements.length === 0) {
+      return [];
+    }
+
+    const uniqueByHash = new Map();
+
+    for (const imageElement of imageElements) {
+      if (!(imageElement instanceof HTMLImageElement)) {
+        continue;
+      }
+
+      const rawUrl =
+        imageElement.currentSrc ||
+        imageElement.src ||
+        imageElement.getAttribute("src") ||
+        "";
+      const normalizedUrl = utils.normalizeUrl(rawUrl);
+      if (!normalizedUrl) {
+        continue;
+      }
+
+      const hash = utils.hashString(normalizedUrl);
+      if (!hash || uniqueByHash.has(hash)) {
+        continue;
+      }
+
+      imageElement.setAttribute("data-aifd-hash", hash);
+      uniqueByHash.set(hash, {
+        hash,
+        type: "image",
+        media_type: "image",
+        url: normalizedUrl,
+        media_url: normalizedUrl,
+      });
+    }
+
+    return Array.from(uniqueByHash.values());
+  }
+
+  function sendRectangleItemsForDetection(mediaItems, bounds, selectedCount) {
+    if (!Array.isArray(mediaItems) || mediaItems.length === 0) {
+      console.log("[AIFD] Rectangle selection contains no scannable images.");
+      clearRectangleAggregateBadge();
+      return null;
+    }
+
+    const selectionId = `rect_${Date.now()}_${Math.random()
+      .toString(16)
+      .slice(2, 8)}`;
+    const itemsWithSelection = mediaItems.map((item) => ({
+      ...item,
+      selectionId,
+      source: "rectangle_mode",
+    }));
+
+    rectangleScanBatches.set(selectionId, {
+      selectionId,
+      bounds: bounds || null,
+      expectedCount: itemsWithSelection.length,
+      selectedCount:
+        Number.isFinite(Number(selectedCount)) && Number(selectedCount) >= 0
+          ? Number(selectedCount)
+          : itemsWithSelection.length,
+      receivedCount: 0,
+      scorePercentTotal: 0,
+      aiLikelyCount: 0,
+      receivedHashes: new Set(),
+      startedAt: Date.now(),
+    });
+
+    chrome.runtime.sendMessage(
+      {
+        type: "SCAN_MEDIA_ITEMS",
+        payload: {
+          items: itemsWithSelection,
+          source: "rectangle_mode",
+          selectionId,
+          bounds: bounds || null,
+          timestamp: Date.now(),
+        },
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          rectangleScanBatches.delete(selectionId);
+          console.warn(
+            "[AIFD] Rectangle scan request failed:",
+            chrome.runtime.lastError.message
+          );
+          return;
+        }
+        console.log(
+          `[AIFD] Rectangle scan requested for ${itemsWithSelection.length} image(s).`,
+          response
+        );
+      }
+    );
+
+    return selectionId;
+  }
+
+  function getRectangleOverlayController() {
+    if (rectangleOverlayController) {
+      return rectangleOverlayController;
+    }
+
+    const rectangleOverlayApi = window.AIFeedDetectorRectangleOverlay;
+    if (!rectangleOverlayApi || typeof rectangleOverlayApi.createController !== "function") {
+      return null;
+    }
+
+    rectangleOverlayController = rectangleOverlayApi.createController({
+      onSelectionComplete(selectionResult) {
+        const rectangleMediaItems = extractRectangleMediaItems(
+          selectionResult?.imageElements || []
+        );
+        latestRectangleSelection = selectionResult
+          ? {
+              ...selectionResult,
+              mediaItems: rectangleMediaItems,
+            }
+          : null;
+        const imageCount = Number(rectangleMediaItems.length || 0);
+        const selectedCount = Number(
+          selectionResult?.imageElements?.length || 0
+        );
+        const width = Math.round(Number(selectionResult?.bounds?.width || 0));
+        const height = Math.round(Number(selectionResult?.bounds?.height || 0));
+        console.log(
+          `[AIFD] Rectangle selection complete: ${width}x${height}, selected images: ${selectedCount}, unique URLs: ${imageCount}`
+        );
+
+        if (
+          currentSettings.extensionEnabled &&
+          currentSettings.detectionMode === "rectangle"
+        ) {
+          const selectionId = sendRectangleItemsForDetection(
+            rectangleMediaItems,
+            selectionResult?.bounds || null,
+            selectedCount
+          );
+          if (latestRectangleSelection) {
+            latestRectangleSelection.selectionId = selectionId;
+          }
+        }
+      },
+      onSelectionCanceled() {
+        rectangleScanBatches.clear();
+        clearRectangleAggregateBadge();
+      },
+      onExitModeRequested() {
+        rectangleScanBatches.clear();
+        clearRectangleAggregateBadge();
+        void exitRectangleMode();
+      },
+    });
+    return rectangleOverlayController;
+  }
+
+  function syncModeUi() {
+    const isFeedMode = currentSettings.detectionMode !== "rectangle";
+    const shouldShowRiskRail =
+      currentSettings.extensionEnabled &&
+      isFeedMode &&
+      currentSettings.showRiskRail;
+
+    if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
+      window.AIFeedDetectorRiskRail.setVisibility(shouldShowRiskRail);
+    }
+
+    const controller = getRectangleOverlayController();
+    if (!controller) {
+      return;
+    }
+
+    const shouldMountRectangleOverlay =
+      currentSettings.extensionEnabled &&
+      !isFeedMode;
+
+    if (shouldMountRectangleOverlay) {
+      controller.mount();
+    } else {
+      controller.unmount();
+      rectangleScanBatches.clear();
+      clearRectangleAggregateBadge();
+    }
+  }
 
   // Handshake with background
   try {
@@ -38,13 +346,32 @@
 
   async function loadSettings() {
     const stored = await chrome.storage.local.get([SETTINGS_KEY]);
+    applySettings(stored[SETTINGS_KEY] || {});
+  }
+
+  function applySettings(nextSettings) {
+    const previousShowScoreOverlay = currentSettings.showScoreOverlay;
     currentSettings = {
       ...DEFAULT_SETTINGS,
-      ...(stored[SETTINGS_KEY] || {}),
+      ...(nextSettings || {}),
     };
-    if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
-      window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);
-  }
+
+    if (!currentSettings.extensionEnabled) {
+      console.log("[AIFD] Extension disabled: Cleaning up UI...");
+      document.querySelectorAll(".aifd-badge-side").forEach((badge) => badge.remove());
+      syncModeUi();
+      return;
+    }
+
+    if (previousShowScoreOverlay && !currentSettings.showScoreOverlay) {
+      document.querySelectorAll(".aifd-badge-side").forEach((badge) => {
+        badge.remove();
+      });
+    } else if (!previousShowScoreOverlay && currentSettings.showScoreOverlay) {
+      replayStoredBadges();
+    }
+
+    syncModeUi();
   }
 
   function subscribeSettingsChanges() {
@@ -53,33 +380,7 @@
         return;
       }
 
-      const previousShowScoreOverlay = currentSettings.showScoreOverlay;
-      currentSettings = {
-        ...DEFAULT_SETTINGS,
-        ...(changes[SETTINGS_KEY].newValue || {}),
-      };
-
-      if (!currentSettings.extensionEnabled) {
-        console.log("[AIFD] Extension disabled: Cleaning up UI...");
-        // Remove all badges
-        document.querySelectorAll(".aifd-badge-side").forEach(b => b.remove());
-        // Hide Risk Rail if it exists
-        if (window.AIFeedDetectorRiskRail) {
-          window.AIFeedDetectorRiskRail.setVisibility(false);
-        }
-        return; // Stop here
-      }
-
-      if (previousShowScoreOverlay && !currentSettings.showScoreOverlay) {
-        document.querySelectorAll(".aifd-badge-side").forEach((badge) => {
-          badge.remove();
-        });
-      } else if (!previousShowScoreOverlay && currentSettings.showScoreOverlay) {
-        replayStoredBadges();
-      }
-
-      if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
-        window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);}
+      applySettings(changes[SETTINGS_KEY].newValue || {});
     });
   }
 
@@ -116,7 +417,7 @@
 
     const postObserver = observerApi.createPostObserver({
       async onPostsDetected(posts) {
-        if (!currentSettings.extensionEnabled) {
+        if (!currentSettings.extensionEnabled || currentSettings.detectionMode === "rectangle") {
           return;
         }
 
@@ -252,10 +553,28 @@
 
   // Listener for results from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "AIFD_SETTINGS_UPDATED") {
+      applySettings(message.payload || {});
+      sendResponse({ status: "settings_applied" });
+      return true;
+    }
+
     if (message.type === "RENDER_BADGE") {
-      console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", message.payload);
+      const payload = message.payload || {};
+
+      if (payload.source === "rectangle_mode" || payload.selectionId) {
+        const handled = handleRectangleDetectionResult(payload);
+        sendResponse({
+          status: handled
+            ? "rectangle_aggregate_updated"
+            : "rectangle_result_ignored",
+        });
+        return true;
+      }
+
+      console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", payload);
       
-      const { hash, score, isAI, url } = message.payload;
+      const { hash, score, isAI, url } = payload;
 
       let target = document.querySelector(`[data-aifd-hash="${hash}"]`);
 
@@ -278,11 +597,11 @@
       return true;
     }
 
-      const payload = { hash, score, isAI };
-      detectionResultsByHash.set(hash, payload);
+      const badgePayload = { hash, score, isAI };
+      detectionResultsByHash.set(hash, badgePayload);
       
       // FIX 1: Add risk rail marker for AI posts
-      if (currentSettings.showRiskRail && isAI && window.AIFeedDetectorRiskRail) {
+      if (currentSettings.detectionMode === "feed" && currentSettings.showRiskRail && isAI && window.AIFeedDetectorRiskRail) {
         window.AIFeedDetectorRiskRail.addMarkerForHash(hash);
       }
 
@@ -291,7 +610,7 @@
         return true;
       }
 
-      renderBadge(payload);
+      renderBadge(badgePayload);
       
       sendResponse({ status: "badge_rendered" });
     }
@@ -299,11 +618,8 @@
     // FIX 2: Handle immediate toggle from popup
     if (message.type === "AIFD_RISKRAIL_TOGGLE") {
       currentSettings.showRiskRail = message.payload.showRiskRail;
-      
-      if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
-        window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);
-        console.log("[AIFD] Risk Rail toggled to:", currentSettings.showRiskRail);
-      }
+      syncModeUi();
+      console.log("[AIFD] Risk Rail toggled to:", currentSettings.showRiskRail);
       
       sendResponse({ status: "toggled", showRiskRail: currentSettings.showRiskRail });
     }
