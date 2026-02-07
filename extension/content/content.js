@@ -42,6 +42,9 @@
       ...DEFAULT_SETTINGS,
       ...(stored[SETTINGS_KEY] || {}),
     };
+    if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
+      window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);
+  }
   }
 
   function subscribeSettingsChanges() {
@@ -63,6 +66,9 @@
       } else if (!previousShowScoreOverlay && currentSettings.showScoreOverlay) {
         replayStoredBadges();
       }
+
+      if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
+        window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);}
     });
   }
 
@@ -217,6 +223,11 @@
 
       const payload = { hash, score, isAI };
       detectionResultsByHash.set(hash, payload);
+      
+      // FIX 1: Add risk rail marker for AI posts
+      if (currentSettings.showRiskRail && isAI && window.AIFeedDetectorRiskRail) {
+        window.AIFeedDetectorRiskRail.addMarkerForHash(hash);
+      }
 
       if (!currentSettings.showScoreOverlay) {
         sendResponse({ status: "overlay_disabled" });
@@ -227,6 +238,19 @@
       
       sendResponse({ status: "badge_rendered" });
     }
+    
+    // FIX 2: Handle immediate toggle from popup
+    if (message.type === "AIFD_RISKRAIL_TOGGLE") {
+      currentSettings.showRiskRail = message.payload.showRiskRail;
+      
+      if (window.AIFeedDetectorRiskRail && window.AIFeedDetectorRiskRail.setVisibility) {
+        window.AIFeedDetectorRiskRail.setVisibility(currentSettings.showRiskRail);
+        console.log("[AIFD] Risk Rail toggled to:", currentSettings.showRiskRail);
+      }
+      
+      sendResponse({ status: "toggled", showRiskRail: currentSettings.showRiskRail });
+    }
+    
     return true;
   });
 })();
