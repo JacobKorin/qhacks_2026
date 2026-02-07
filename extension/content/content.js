@@ -51,11 +51,26 @@
 
         for (const post of posts) {
           const mediaItems = mediaApi.extractMediaFromPost(post);
-          if (mediaItems.length === 0) {
+          
+          if (!mediaItems || mediaItems.length === 0) continue;
+          
+          const contentToScan = mediaItems.slice(1);
+
+          if (contentToScan.length === 0) {
+            console.log("[AI Feed Detector] Only profile pic found, skipping.");
             continue;
           }
 
-          console.log("[AI Feed Detector] Extracted media:", mediaItems);
+          console.log("[AI Feed Detector] Sending post content to background:", contentToScan);
+
+          chrome.runtime.sendMessage({
+            type: "SCAN_MEDIA_ITEMS",
+            payload: {
+              items: contentToScan,
+              timestamp: Date.now()
+            }
+          });
+          console.log("[AI Feed Detector] Extracted media:", contentToScan);
         }
       },
     });
