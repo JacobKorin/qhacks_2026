@@ -29,11 +29,12 @@ window.AIFeedDetectorOverlay = (function() {
                 padding: 12px;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.08);
                 font-family: "Segoe UI", "Aptos", sans-serif;
-                z-index: 999;
+                z-index: 10001; /* High z-index to stay above video overlays */
                 animation: aifd-fade-in 0.4s ease-out;
                 display: flex;
                 flex-direction: column;
                 gap: 4px;
+                pointer-events: auto;
             }
             .aifd-badge-header { 
                 font-size: 11px; 
@@ -77,16 +78,25 @@ window.AIFeedDetectorOverlay = (function() {
 
     return {
         renderBadgeOnImage: function(hash, isAI, score) {
-            const imgElement = document.querySelector(`img[data-aifd-hash="${hash}"]`);
-            if (!imgElement) return;
+            // UPDATED: Now searches for ANY element (img or video) with the hash
+            const mediaElement = document.querySelector(`[data-aifd-hash="${hash}"]`);
+            
+            if (!mediaElement) {
+                console.warn(`[AIFD] Target media for hash ${hash} not found in DOM.`);
+                return;
+            }
 
-            const postContainer = imgElement.closest('article');
+            const postContainer = mediaElement.closest('article') || 
+                    mediaElement.closest('div[role="menuitem"]') || 
+                    mediaElement.parentElement;
             if (!postContainer) return;
 
             postContainer.style.overflow = 'visible';
             postContainer.style.position = 'relative';
 
-            if (postContainer.querySelector('.aifd-badge-side')) return;
+            // Remove existing badge if present to allow for updates/re-scans
+            const existing = postContainer.querySelector('.aifd-badge-side');
+            if (existing) existing.remove();
 
             // --- Math Logic ---
             let displayScore = score > 1 ? score : score * 100;
@@ -95,8 +105,6 @@ window.AIFeedDetectorOverlay = (function() {
             // --- Label Logic ---
             const mainLabel = isAI ? 'AI Generated' : 'Not AI Generated';
             
-            // Determine visual style: Use warn colors if confidence is low, 
-            // otherwise use the AI/Human primary colors.
             const colorClass = (displayScore < 65) ? 'is-warn' : (isAI ? 'is-ai' : 'is-human');
             const bgClass = (displayScore < 65) ? 'bg-warn' : (isAI ? 'bg-ai' : 'bg-human');
 
@@ -110,6 +118,7 @@ window.AIFeedDetectorOverlay = (function() {
                 </div>
             `;
             postContainer.appendChild(badge);
+            console.log(`[AIFD] Badge rendered for ${mediaElement.tagName} (${hash.substring(0,8)})`);
         }
     };
 })();

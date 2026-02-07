@@ -11,14 +11,20 @@ export async function detectAIContent(mediaItem) {
 
         console.log(`[AIFD] Forwarding data to Flask for hash: ${mediaItem.hash}`);
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds
+        
         const response = await fetch(API_URL, {
             method: "POST",
+            signal: controller.signal,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
-                image: mediaItem.base64, // Use the pre-fetched data
+                image: mediaItem.base64,
+                isVideo: mediaItem.isVideo || false,
                 hash: mediaItem.hash 
             })
         });
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             const errorText = await response.text();

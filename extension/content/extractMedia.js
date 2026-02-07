@@ -29,35 +29,55 @@
   }
 
   function extractMediaFromPost(postElement) {
-    if (!(postElement instanceof Element)) {
-      return [];
+    if (!(postElement instanceof Element)) return [];
+    utils = globalScope.AIFeedDetectorUtils;
+    const mediaItems = [];
+
+    const profilePic = postElement.querySelector('header img, canvas._aadp');
+    mediaItems.push({
+        url: profilePic?.src || "ui-placeholder",
+        type: 'ui',
+        hash: 'profile'
+    });
+
+    let video = postElement.querySelector("video");
+    
+    if (!video) {
+      const videoContainer = postElement.querySelector('div._as9-'); 
+      video = videoContainer?.querySelector('video');
+    }
+    
+    if (!video && postElement.tagName === 'VIDEO') {
+      video = postElement;
     }
 
-    const urlSet = new Set();
-
-    const imageElements = postElement.querySelectorAll("img");
-    for (const image of imageElements) {
-      addUrlIfValid(urlSet, image.currentSrc || image.src);
-      extractFromSrcSet(urlSet, image.srcset);
+    console.log("[AIFD] Video found?", video);
+    if (video) {
+      const vSrc = video.currentSrc || video.src;
+      if (vSrc) {
+        mediaItems.push({
+          url: vSrc.startsWith('blob:') ? video.poster : vSrc,
+          type: 'video', // LABELING as video
+          hash: utils.hashString(vSrc)
+        });
+          
+        return mediaItems;
+      }
     }
 
-    const sourceElements = postElement.querySelectorAll("source");
-    for (const source of sourceElements) {
-      addUrlIfValid(urlSet, source.src);
-      extractFromSrcSet(urlSet, source.srcset);
+    const img = postElement.querySelector("div._aagv img, img.FFVAD");
+    if (img) {
+      const iSrc = img.currentSrc || img.src;
+      if (iSrc) {
+        mediaItems.push({
+          url: iSrc,
+          type: 'image', // LABELING as image
+          hash: utils.hashString(iSrc)
+        });
+      }
     }
-
-    const videoElements = postElement.querySelectorAll("video");
-    for (const video of videoElements) {
-      addUrlIfValid(urlSet, video.currentSrc || video.src);
-      addUrlIfValid(urlSet, video.poster);
-    }
-
-    const utils = globalScope.AIFeedDetectorUtils;
-    return Array.from(urlSet).map((url) => ({
-      url,
-      hash: utils.hashString(url),
-    }));
+    
+    return mediaItems;
   }
 
   globalScope.AIFeedDetectorExtractMedia = {
