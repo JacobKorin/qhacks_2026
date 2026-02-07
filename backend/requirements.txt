@@ -3,4 +3,6 @@ Flask-CORS==4.0.0
 python-dotenv==1.0.0
 requests==2.31.0
 Werkzeug==2.3.7
-MoviePy==2.2.1
+opencv-python-headless==4.9.0.80
+Pillow==10.0.0
+# Remove moviepy import and create a simple video function
