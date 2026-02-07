@@ -6,7 +6,7 @@ AI Feed Detector is a Chrome extension that identifies likely AI-generated image
 Development is structured into three tiers:
 1. Instagram-only MVP  
 2. Multi-platform social media support  
-3. Generic web click-to-scan mode  
+3. Generic web rectangle-selection detection mode  
 
 Each tier builds on the same detection pipeline and Flask backend.
 
@@ -15,7 +15,6 @@ Each tier builds on the same detection pipeline and Flask backend.
 # Tier 1 — Instagram-Only MVP
 
 ## File Breakdown (Iteration 1)
-
 
 ai-feed-detector/
 
@@ -58,7 +57,6 @@ ai-feed-detector/
 
     .env # API keys (do not commit)
     README.md # Setup instructions
-
 
 ---
 
@@ -114,28 +112,49 @@ Support Instagram + X + Facebook + TikTok with minimal site-specific code.
 
 ---
 
-# Tier 3 — Generic Web Click-to-Scan
+# Tier 3 — Generic Web Rectangle-Selection Mode
 
 ## Goal
-Let users detect AI images anywhere via click.
+Allow users to detect AI-generated images anywhere on any webpage by drawing a rectangle over the screen, similar to the Windows snipping tool.
+
+Instead of taking a screenshot for saving, the selected region is analyzed for AI-generated imagery.
 
 ## Features
 
-- Click-to-scan images  
-- Contextual badges on clicked images  
-- Mode toggles (social vs web)  
-- Privacy-friendly scanning  
+- Snipping-tool style rectangle selection  
+- Works on any webpage  
+- Detects images inside selected region  
+- Overlays AI likelihood badges on detected images  
+- User-triggered scanning (privacy-friendly)  
+- Mode toggle in popup (Feed Mode vs Rectangle Mode)
 
-## Development Steps
+## How It Works (Concept)
 
-1. Add click listener for images  
-2. Ignore small/icons images  
-3. Trigger detection on click  
-4. Show scanning → result badge  
-5. Add popup mode switcher  
-6. Enforce size thresholds + caching  
-7. Handle cross-origin images via backend  
-8. Position as privacy-respecting feature  
+1. User activates "Rectangle Detection Mode" from popup  
+2. Page enters selection mode with crosshair cursor  
+3. User clicks and drags to draw a rectangle  
+4. Extension identifies all images intersecting that rectangle  
+5. Each image is sent for AI detection  
+6. Badges appear on images inside the selected area  
+
+No full-page scanning occurs — only user-selected regions.
+
+---
+
+## Tier 3 Development Steps
+
+1. Add popup toggle for Rectangle Mode  
+2. Inject overlay layer for drawing rectangle  
+3. Track mouse drag coordinates  
+4. Render selection rectangle visually  
+5. On mouse release:
+   - compute rectangle bounds  
+   - find images intersecting region  
+6. Extract URLs from those images  
+7. Send detection requests via background script  
+8. Display badges on detected images  
+9. Add cancel/exit selection mode  
+10. Polish UX (cursor, shading outside region, etc.)
 
 ---
 
@@ -144,7 +163,7 @@ Let users detect AI images anywhere via click.
 AI Feed Detector evolves into:
 - A social media safety tool  
 - A scalable cross-platform system  
-- A privacy-aware web AI detector  
+- A user-controlled web AI detector  
 
 Core principles:
 - Clear UX  
@@ -156,10 +175,11 @@ Core principles:
 
 # Demo Narrative (Hackathon Friendly)
 
-1. Scroll Instagram → see badges and heatmap dots appear  
+1. Scroll Instagram → badges and heatmap dots appear  
 2. Click a red dot → jump to flagged post  
 3. Show popup stats dashboard  
-4. Switch to click-to-scan mode on a normal website  
-5. Click an image → instant AI likelihood badge  
+4. Switch to Rectangle Mode  
+5. Draw a box around images on any site  
+6. AI likelihood badges appear on selected images  
 
 This demonstrates scalability, usability, and real-world impact.
