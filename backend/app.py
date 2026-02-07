@@ -26,7 +26,7 @@ CORS(app)
 
 # Configuration for AI detection
 AI_OR_NOT_API_KEY = os.getenv('AI_OR_NOT_API_KEY')
-AI_OR_NOT_API_URL = "https://api.aiornot.com/v1/detect"  # Verify this URL
+AI_OR_NOT_API_URL = "https://api.aiornot.com/v2/image/sync"  # Verify this URL
 QUOTA_LIMIT = int(os.getenv('QUOTA_LIMIT', '625'))
 
 # Quota management
@@ -361,3 +361,4 @@ def receive_image():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3500, debug=True)
+
