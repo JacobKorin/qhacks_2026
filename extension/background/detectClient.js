@@ -1,26 +1,49 @@
 // background/detectClient.js
 
 export async function detectAIContent(mediaItem) {
-    // Replace with your actual Flask endpoint
-    const API_URL = "http://localhost:3500/media/image"; 
+    const API_URL = "http://localhost:3500/mock/detect"; 
 
     try {
+        // If content.js didn't provide base64, we can't proceed (avoids the 403)
+        if (!mediaItem.base64) {
+            throw new Error("No image data provided by content script");
+        }
+
+        console.log(`[AIFD] Forwarding data to Flask for hash: ${mediaItem.hash}`);
+
         const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            url: mediaItem.url,
-            hash: mediaItem.hash,
-            type: mediaItem.url.includes('video') ? 'video' : 'image' // Basic type check
-        })
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                image: mediaItem.base64, // Use the pre-fetched data
+                hash: mediaItem.hash 
+            })
         });
 
-        if (!response.ok) throw new Error("Backend unavailable");
-        
-        return await response.json(); 
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[AIFD] Flask returned error ${response.status}:`, errorText);
+            throw new Error(`Flask rejected request: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("[AIFD] RAW DATA FROM FLASK:", data);
+
+        return {
+            hash: mediaItem.hash,
+            isAI: data.is_ai ?? false,
+            score: data.confidence ?? 0,
+            fromMock: true
+        };
 
     } catch (err) {
-
-        return { hash: mediaItem.hash, score: Math.random(), isAI: false };
+        console.error("%c[AIFD] PIPELINE ERROR:", "color: red; font-weight: bold;", err.message);
+        
+        return { 
+            hash: mediaItem.hash, 
+            score: 0, 
+            isAI: false, 
+            errorMessage: err.message 
+        };
     }
 }

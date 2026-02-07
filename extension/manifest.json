@@ -8,7 +8,10 @@
   ],
   "host_permissions": [
     "https://www.instagram.com/*",
-    "https://instagram.com/*"
+    "https://instagram.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
+    "http://localhost:3500/*"
   ],
   "background": {
     "service_worker": "background/serviceWorker.js",
@@ -25,6 +28,7 @@
         "content/dom.js",
         "content/observer.js",
         "content/extractMedia.js",
+        "content/overlay.js",
         "content/content.js"
       ],
       "run_at": "document_idle"

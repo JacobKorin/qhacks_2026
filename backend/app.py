@@ -3,6 +3,7 @@ import binascii
 import hashlib
 import os
 import uuid
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -358,6 +359,35 @@ def receive_image():
         },
     }
     return jsonify(response)
+
+#Temp to mock the detect feature
+@app.post("/mock/detect")
+def mock_detect():
+    """Mock endpoint to test frontend without using API credits"""
+    # 1. Simulate the same request parsing as the real endpoint
+    payload = request.get_json(silent=True) or {}
+    image_base64 = payload.get("image")
+    
+    if not image_base64:
+        return jsonify({"ok": False, "error": "No image data provided"}), 400
+
+    # 2. Generate a hash so we can return a realistic 'hash' field
+    # (Just hashing a small slice of the b64 for speed)
+    image_hash = hashlib.sha256(image_base64[:100].encode()).hexdigest()
+
+    # 3. Randomize the AI result for variety in testing
+    is_ai = random.choice([True, False])
+    confidence = random.uniform(50.0, 99.9)
+
+    # 4. Return the exact structure the extension expects
+    return jsonify({
+        "ok": True,
+        "is_ai": is_ai,
+        "confidence": round(confidence, 2),
+        "cached": False,
+        "hash": image_hash,
+        "quota": quota_manager.get_status()
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3500, debug=True)
