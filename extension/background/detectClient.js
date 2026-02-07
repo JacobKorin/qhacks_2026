@@ -2,7 +2,7 @@
 
 export async function detectAIContent(mediaItem) {
     // Replace with your actual Flask endpoint
-    const API_URL = "http://localhost:3000/media/image"; 
+    const API_URL = "http://localhost:3500/media/image"; 
 
     try {
         const response = await fetch(API_URL, {

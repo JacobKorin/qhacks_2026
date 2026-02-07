@@ -1,6 +1,7 @@
 import { detectAIContent } from "./detectClient.js";
 const READY_MESSAGE = "AIFD_CONTENT_READY";
 const SCAN_MESSAGE = "SCAN_MEDIA_ITEMS";
+const STATS_KEY = "aifd_stats";
 
 console.log("[AI Feed Detector] Service worker initialized");
 
@@ -36,11 +37,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false; // Not a message type we handle
 });
 
+async function incrementScannedCount() {
+  const stored = await chrome.storage.local.get([STATS_KEY]);
+  
+  // Get existing stats or use defaults if empty
+  const stats = stored[STATS_KEY] || { 
+    scannedCount: 0, 
+    flaggedCount: 0, 
+    lastScanAt: null 
+  };
+
+  // Increment ONLY the scanned count
+  stats.scannedCount += 1;
+  stats.lastScanAt = Date.now();
+
+  // Save the updated object back to storage
+  await chrome.storage.local.set({ [STATS_KEY]: stats });
+}
+
 async function processItems(items, tabId) {
   for (const item of items) {
     try {
       const result = await detectAIContent(item);
       
+      await incrementScannedCount();
+
       // Send results back to overlay.js in the content script
       chrome.tabs.sendMessage(tabId, {
         type: "RENDER_BADGE",
