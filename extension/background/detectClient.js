@@ -1,7 +1,7 @@
 // background/detectClient.js
 
 export async function detectAIContent(mediaItem) {
-    const API_URL = "http://localhost:3500/mock/detect";
+    const API_URL = "http://localhost:3500/detect";
 
     try {
         const mediaType = mediaItem.type === "video" || mediaItem.isVideo ? "video" : "image";

@@ -7,6 +7,7 @@ import os
 import uuid
 import random
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -141,6 +142,8 @@ def _call_ai_detection_api(media_bytes: bytes, media_type: str, filename: Option
     )
 
     try:
+        key_preview = f"{AI_OR_NOT_API_KEY[:4]}...{AI_OR_NOT_API_KEY[-4:]}"
+        print(f"[DEBUG] Using Key: {key_preview} (Length: {len(AI_OR_NOT_API_KEY)})")
         response = requests.post(endpoint, files=files, headers=headers, timeout=60)
     except requests.Timeout as exc:
         print(f"[AIFD][AIORNOT] timeout media_type={media_type}: {exc}")
@@ -244,120 +247,113 @@ def health():
 
 @app.post("/detect")
 def detect_image():
-    """Analyze image for AI generation using AI or Not API"""
+    """
+    Analyze media for AI generation. 
+    Handles:
+    1. Video Data (Base64 bytes from Blobs)
+    2. Image Data (Base64 from Canvas)
+    3. Media URLs (Standard fallbacks/thumbnails)
+    """
     try:
         if not AI_OR_NOT_API_KEY:
-            return jsonify({"ok": False, "error": "Missing AI_OR_NOT_API_KEY in environment"}), 500
+            return jsonify({"ok": False, "error": "Missing AI_OR_NOT_API_KEY"}), 500
 
         payload = request.get_json(silent=True) or {}
-        media_type = "video" if payload.get("media_type") == "video" else "image"
-
-        # Determine input format
-        if "file" in request.files:
-            # Handle file upload
-            upload = request.files["file"]
-            if not upload.filename:
-                return jsonify({"ok": False, "error": "Missing filename"}), 400
-            
-            image_bytes = upload.read()
-            if not image_bytes:
-                return jsonify({"ok": False, "error": "Empty image file"}), 400
-
-            image_hash = _generate_image_hash(image_bytes)
-            source_filename = upload.filename
-
-        else:
-            # Handle JSON payload with base64 image or media URL
-            image_base64 = payload.get("image")
-            media_url = payload.get("media_url") or payload.get("url")
-            
-            if image_base64:
-                if image_base64.startswith('data:'):
-                    image_base64 = image_base64.split(',', 1)[1]
-
-                try:
-                    image_bytes = base64.b64decode(image_base64, validate=True)
-                except (binascii.Error, ValueError) as exc:
-                    return jsonify({"ok": False, "error": f"Invalid base64: {exc}"}), 400
-
-                if not image_bytes:
-                    return jsonify({"ok": False, "error": "Empty decoded image payload"}), 400
-
-                image_hash = _generate_image_hash(image_bytes)
-                source_filename = "inline-upload.mp4" if media_type == "video" else "inline-upload.jpg"
-            elif media_url:
-                try:
-                    response = requests.get(media_url, timeout=20)
-                    response.raise_for_status()
-                    image_bytes = response.content
-                except requests.RequestException as exc:
-                    return jsonify({"ok": False, "error": f"Failed to fetch media_url: {exc}"}), 400
-
-                if not image_bytes:
-                    return jsonify({"ok": False, "error": "Fetched media_url returned empty body"}), 400
-
-                image_hash = _generate_image_hash(image_bytes)
-                source_filename = Path(media_url).name or ("remote.mp4" if media_type == "video" else "remote.jpg")
-            else:
-                return jsonify({"ok": False, "error": "No image or media_url provided"}), 400
         
-        # Check cache first
-        if image_hash in cache:
-            cached_entry = cache[image_hash]
+        # 1. Identify Content Type & Source
+        # Priority: video_data (Blob) > base64 (Image) > media_url (Fallback/Poster)
+        video_data = payload.get("video_data")
+        image_base64 = payload.get("base64") or payload.get("image")
+        media_url = payload.get("media_url") or payload.get("url")
+        is_video_type = payload.get("isVideo") or payload.get("media_type") == "video"
+
+        media_bytes = None
+        source_filename = "upload.jpg"
+
+        # A) Handle Video Blob Bytes (The primary "Friend's Computer" fix)
+        if video_data:
+            media_bytes = base64.b64decode(video_data)
+            source_filename = "blob_video.mp4"
+            is_video_type = True
+        
+        # B) Handle Image Base64 (The "Canvas" capture)
+        elif image_base64:
+            if "," in image_base64:
+                image_base64 = image_base64.split(',', 1)[1]
+            media_bytes = base64.b64decode(image_base64)
+            source_filename = "canvas_capture.jpg"
+            is_video_type = False # It's a captured frame/thumbnail
+
+        # C) Handle URL (The "My Computer" or "Poster" fallback)
+        elif media_url:
+            resp = requests.get(media_url, timeout=20)
+            resp.raise_for_status()
+            media_bytes = resp.content
+            source_filename = Path(media_url).name or "remote_media"
+
+        if not media_bytes:
+            return jsonify({"ok": False, "error": "No media content provided"}), 400
+
+        media_hash = hashlib.sha256(media_bytes).hexdigest()
+
+        # 2. Cache Check (Same as Mock)
+        if media_hash in cache:
             return jsonify({
-                "ok": True,
-                "is_ai": cached_entry["result"]["is_ai"],
-                "confidence": cached_entry["result"]["confidence"],
-                "cached": True,
-                "hash": image_hash,
+                **cache[media_hash]["result"], 
+                "cached": True, 
+                "hash": media_hash, 
                 "quota": quota_manager.get_status()
             })
-        
-        # Check quota
+
+        # 3. Quota Guard
         if not quota_manager.can_analyze():
-            return jsonify({
-                "ok": False,
-                "error": "Quota limit reached",
-                "quota": quota_manager.get_status()
-            }), 429
-        
-        # Call AI detection API
-        try:
-            api_response = _call_ai_detection_api(image_bytes, media_type, source_filename)
-            is_ai, confidence = _normalize_aiornot_response(api_response)
+            return jsonify({"ok": False, "error": "Quota reached", "quota": quota_manager.get_status()}), 429
 
-            result = {"is_ai": is_ai, "confidence": confidence}
+        # 4. Video Trimming (First 5 Seconds Only)
+        # We only trim if it's actually a video file, not a poster image URL.
+        if is_video_type and source_filename.endswith(('.mp4', '.webm', '.mov', 'video_blob.mp4')):
+            _ensure_upload_dir()
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=UPLOAD_DIR) as tmp_in:
+                tmp_in.write(media_bytes)
+                input_path = tmp_in.name
             
-            # Use quota credit
-            quota_manager.use_credit()
+            output_path = input_path.replace(".mp4", "_trimmed.mp4")
             
-            # Cache result (with 24-hour TTL)
-            cache[image_hash] = {
-                "result": result,
-                "timestamp": _utc_now_iso()
-            }
-            
-            # Clean old cache entries periodically
-            if len(cache) % 10 == 0:  # Every 10 requests
-                _clean_old_cache_entries()
-            
-            return jsonify({
-                "ok": True,
-                "is_ai": is_ai,
-                "confidence": confidence,
-                "cached": False,
-                "hash": image_hash,
-                "media_type": media_type,
-                "quota": quota_manager.get_status()
-            })
-            
-        except requests.exceptions.RequestException as exc:
-            return jsonify({
-                "ok": False,
-                "error": f"AI detection API error: {exc}"
-            }), 503
-            
+            try:
+                with VideoFileClip(input_path) as video:
+                    # Clip to 5 seconds to speed up AI detection and save bandwidth
+                    duration = min(5, video.duration)
+                    trimmed = video.subclip(0, duration)
+                    # Using ultrafast to keep server response snappy
+                    trimmed.write_videofile(output_path, codec="libx264", audio=False, logger=None, preset="ultrafast")
+                
+                media_bytes = Path(output_path).read_bytes()
+            finally:
+                if os.path.exists(input_path): os.remove(input_path)
+                if os.path.exists(output_path): os.remove(output_path)
+
+        # 5. Execute AI Detection
+        api_response = _call_ai_detection_api(media_bytes, "video" if is_video_type else "image", source_filename)
+        is_ai, confidence = _normalize_aiornot_response(api_response)
+        quota_manager.use_credit()
+
+        # 6. Response Construction (Matches your Mock structure)
+        result = {
+            "ok": True,
+            "is_ai": is_ai,
+            "confidence": confidence,
+            "hash": media_hash,
+            "media_type": "video" if is_video_type else "image",
+            "quota": quota_manager.get_status()
+        }
+
+        # Cache with 24h TTL logic
+        cache[media_hash] = {"result": result, "timestamp": _utc_now_iso()}
+        
+        return jsonify(result)
+
     except Exception as e:
+        print(f"[AIFD] Backend Error: {str(e)}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.get("/quota")
