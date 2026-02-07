@@ -16,8 +16,11 @@ Each tier builds on the same detection pipeline and Flask backend.
 
 ## File Breakdown (Iteration 1)
 
+
 ai-feed-detector/
+
     extension/ # Chrome extension folder (load unpacked from here)
+
         manifest.json                  # Permissions, scripts, Instagram match rules
 
         assets/                        # Icons for extension
