@@ -138,18 +138,23 @@
             if (item.type === "video") {
               const vidEl = post.querySelector("video");
               if (vidEl) {
-                vidEl.setAttribute("data-aifd-hash", item.hash);
+                  vidEl.setAttribute("data-aifd-hash", item.hash);
               }
 
               chrome.runtime.sendMessage({
-                type: "SCAN_MEDIA_ITEMS",
-                payload: {
-                  items: [{ ...item, isVideo: true }],
-                  timestamp: Date.now()
-                }
+                  type: "SCAN_MEDIA_ITEMS",
+                  payload: {
+                      items: [{ 
+                          ...item, 
+                          media_type: "video", // Helps backend detection
+                          media_url: item.url,  // Critical fallback
+                          isVideo: true 
+                      }],
+                      timestamp: Date.now()
+                  }
               });
               continue;
-            }
+          }
 
             let payloadItem = { ...item };
 
@@ -162,6 +167,8 @@
               });
 
               if (imgElement) {
+                imgElement.crossOrigin = "anonymous";
+                try {
                 const canvas = document.createElement("canvas");
                 canvas.width = imgElement.naturalWidth;
                 canvas.height = imgElement.naturalHeight;
@@ -176,9 +183,12 @@
                     ? dataUrl.split(",", 2)[1]
                     : "";
 
-                  if (encoded.length > 0) {
-                    payloadItem.base64 = dataUrl;
+                    if (encoded.length > 0) {
+                      payloadItem.base64 = dataUrl;
+                    }
                   }
+                } catch (err) {
+                  console.warn("[AIFD] Canvas failed, sending URL only.");
                 }
 
                 imgElement.setAttribute("data-aifd-hash", item.hash);
@@ -190,10 +200,15 @@
             chrome.runtime.sendMessage({
               type: "SCAN_MEDIA_ITEMS",
               payload: {
-                items: [payloadItem],
-                timestamp: Date.now()
+                  items: [{
+                      hash: item.hash,
+                      media_type: item.type,
+                      media_url: item.url, // This matches your backend logs!
+                      base64: payloadItem.base64 || null,
+                      isVideo: item.type === "video"
+                  }]
               }
-            });
+          });
           }
         }
       },
@@ -210,7 +225,28 @@
     if (message.type === "RENDER_BADGE") {
       console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", message.payload);
       
-      const { hash, score, isAI } = message.payload;
+      const { hash, score, isAI, url } = message.payload;
+
+      let target = document.querySelector(`[data-aifd-hash="${hash}"]`);
+
+      if (!target && url) {
+        const baseUrl = url.split("?")[0]; // Clean Instagram tokens
+        const allMedia = document.querySelectorAll("img, video");
+        
+        for (const el of allMedia) {
+          const src = el.currentSrc || el.src || "";
+          if (src.includes(baseUrl)) {
+            el.setAttribute("data-aifd-hash", hash); // Restore the hash tag
+            target = el;
+            break;
+          }
+        }
+      }
+
+    if (!target) {
+      console.warn(`[AIFD] Target media for hash ${hash} not found in DOM.`);
+      return true;
+    }
 
       const payload = { hash, score, isAI };
       detectionResultsByHash.set(hash, payload);

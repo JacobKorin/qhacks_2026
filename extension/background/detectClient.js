@@ -1,35 +1,32 @@
 // background/detectClient.js
 
 export async function detectAIContent(mediaItem) {
-    const API_URL = "http://localhost:3500/detect";
+    const API_URL = "http://localhost:3500/mock/detect";
 
     try {
-        const mediaType = mediaItem.type === "video" ? "video" : "image";
+        const mediaType = mediaItem.type === "video" || mediaItem.isVideo ? "video" : "image";
+        
         const payload = {
             hash: mediaItem.hash,
             media_type: mediaType,
-            media_url: mediaItem.url || null
+            media_url: mediaItem.url || mediaItem.media_url || null,
+            isVideo: mediaType === "video" // Explicit flag for your backend logic
         };
 
-        if (
-            typeof mediaItem.base64 === "string" &&
-            mediaItem.base64.length > 0 &&
-            mediaItem.base64.includes(",")
-        ) {
-            const encoded = mediaItem.base64.split(",", 2)[1] || "";
-            if (encoded.length > 0) {
-            payload.image = mediaItem.base64;
-            }
+        // Standardize Base64 key to match Flask data.get("base64")
+        if (mediaItem.base64 && typeof mediaItem.base64 === "string" && mediaItem.base64.length > 0) {
+            // We send the whole string; the backend already handles splitting at the comma
+            payload.base64 = mediaItem.base64; 
         }
 
-        if (!payload.image && !payload.media_url) {
+        if (!payload.base64 && !payload.media_url) {
             throw new Error("No image/video payload available");
         }
 
-        console.log(`[AIFD] Forwarding data to Flask for hash: ${mediaItem.hash}`);
+        console.log(`[AIFD] Forwarding ${mediaType} to Flask for hash: ${mediaItem.hash}`);
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds
+        const timeoutId = setTimeout(() => controller.abort(), 120000); 
         
         const response = await fetch(API_URL, {
             method: "POST",
@@ -41,18 +38,17 @@ export async function detectAIContent(mediaItem) {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[AIFD] Flask returned error ${response.status}:`, errorText);
-            throw new Error(`Flask rejected request: ${response.status}`);
+            throw new Error(`Flask rejected request (${response.status}): ${errorText}`);
         }
 
         const data = await response.json();
-        console.log("[AIFD] RAW DATA FROM FLASK:", data);
-
+        
+        // Ensure the return object matches what background.js:normalizeDetectionResult expects
         return {
-            hash: mediaItem.hash,
+            hash: data.hash || mediaItem.hash,
             isAI: data.is_ai ?? false,
-            score: data.confidence ?? 0,
-            fromMock: false
+            score: data.confidence ?? 0, // background.js uses result.score
+            fromMock: true
         };
 
     } catch (err) {
@@ -62,7 +58,7 @@ export async function detectAIContent(mediaItem) {
             hash: mediaItem.hash, 
             score: 0, 
             isAI: false, 
-            errorMessage: err.message 
+            error: err.message 
         };
     }
 }

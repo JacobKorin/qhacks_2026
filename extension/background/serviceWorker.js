@@ -108,7 +108,10 @@ async function processOneItem(item, tabId) {
 
     await chrome.tabs.sendMessage(tabId, {
       type: "RENDER_BADGE",
-      payload: normalizedResult,
+      payload: {
+        ...normalizedResult,
+        url: item.media_url ||item.url
+      },
     });
   } catch (error) {
     console.error("[AI Feed Detector] Item processing error:", error);

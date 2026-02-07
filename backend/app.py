@@ -25,7 +25,7 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", APP_ROOT / "uploads"))
 MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", "10485760"))  # 10 MB
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 CORS(app)
 
 # Configuration for AI detection
@@ -455,48 +455,51 @@ def receive_image():
 
 @app.post("/mock/detect")
 def mock_detect():
-    """Mock endpoint to test both Image and Video flows with simulated trimming"""
-    payload = request.get_json(silent=True) or {}
-    image_base64 = payload.get("image")
-    is_video = payload.get("isVideo", False) 
+    data = request.get_json(silent=True)
     
-    if not image_base64:
-        return jsonify({"ok": False, "error": "No media data provided"}), 400
+    if data is None:
+        print(f"DEBUG: Received non-JSON body: {request.data[:100]}...") 
+        return {"error": "Invalid JSON"}, 400
 
-    # SIMULATED TRIMMING LOGIC
+    # 1. Capture all possible keys from frontend
+    image_base64 = data.get("base64") or data.get("image")
+    media_url = data.get("media_url") or data.get("url")
+    is_video = data.get("isVideo") or data.get("media_type") == "video"
+
+    # 2. VALIDATION: We need AT LEAST one data source
+    if not image_base64 and not media_url:
+        print(f"DEBUG: Missing media. Available keys: {list(data.keys())}")
+        return jsonify({"ok": False, "error": "No media data (base64 or URL) provided"}), 400
+
+    # 3. Handle processing stats
     processing_time = 0
-    file_size_mb = len(image_base64) * 3 / 4 / (1024 * 1024) # Rough B64 to MB calc
+    # Use base64 for size calc if available, otherwise assume a standard size
+    if image_base64:
+        file_size_mb = len(image_base64) * 3 / 4 / (1024 * 1024)
+    else:
+        file_size_mb = 2.0 # Default fallback for URL-only items
 
     if is_video:
-        # Simulate the backend "trimming" the video to 15 seconds
-        # We'll add a artificial delay based on the "size" of the video
-        processing_time = min(5, file_size_mb / 2) # Max 5 sec delay for mock
-        print(f"[MOCK] Trimming video... Original size: {file_size_mb:.2f}MB")
+        processing_time = min(5, file_size_mb / 2)
+        print(f"[MOCK] Processing video... Source: {'B64' if image_base64 else 'URL'}")
         time.sleep(processing_time) 
-        print(f"[MOCK] Video trimmed to 15s equivalent.")
 
-    # 1. Generate hash
-    image_hash = hashlib.sha256(image_base64[:100].encode()).hexdigest()
+    # 4. Generate hash based on whatever source we actually have
+    source_str = image_base64 if image_base64 else media_url
+    image_hash = hashlib.sha256(source_str[:100].encode()).hexdigest()
 
-    # 2. Logic: AI Result
+    # 5. Result Logic
     is_ai = random.choice([True, False])
-    
-    if random.random() < 0.2: 
-        confidence = random.uniform(40.0, 60.0)
-    else:
-        confidence = random.uniform(85.0, 99.9)
+    confidence = random.uniform(85.0, 99.9) if random.random() > 0.2 else random.uniform(40.0, 60.0)
 
-    # 3. Console Output
-    media_type = "VIDEO" if is_video else "IMAGE"
-    print(f"[MOCK] {media_type} PROCESSED | Delay: {processing_time:.1f}s | Result: {is_ai}")
+    print(f"[MOCK] {'VIDEO' if is_video else 'IMAGE'} | Hash: {image_hash[:8]} | Result: {is_ai}")
 
-    # 4. Return the structure
     return jsonify({
         "ok": True,
         "is_ai": is_ai,
         "confidence": round(confidence, 2),
         "is_video_processed": is_video,
-        "processing_time": processing_time, # Added for your debugging
+        "processing_time": processing_time,
         "cached": False,
         "hash": image_hash,
         "quota": quota_manager.get_status()
