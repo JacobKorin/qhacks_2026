@@ -1,4 +1,5 @@
 import base64
+import io
 import binascii
 import hashlib
 import mimetypes
@@ -458,49 +459,50 @@ def mock_detect():
     data = request.get_json(silent=True)
     
     if data is None:
-        print(f"DEBUG: Received non-JSON body: {request.data[:100]}...") 
         return {"error": "Invalid JSON"}, 400
 
-    # 1. Capture all possible keys from frontend
+    # 1. Capture all possible keys
     image_base64 = data.get("base64") or data.get("image")
+    video_blob_data = data.get("video_data") # New key for raw bytes
     media_url = data.get("media_url") or data.get("url")
     is_video = data.get("isVideo") or data.get("media_type") == "video"
 
-    # 2. VALIDATION: We need AT LEAST one data source
-    if not image_base64 and not media_url:
-        print(f"DEBUG: Missing media. Available keys: {list(data.keys())}")
-        return jsonify({"ok": False, "error": "No media data (base64 or URL) provided"}), 400
+    # 2. VALIDATION: Check for ANY source
+    if not image_base64 and not media_url and not video_blob_data:
+        return jsonify({"ok": False, "error": "No media data provided"}), 400
 
-    # 3. Handle processing stats
+    # 3. Processing Logic
     processing_time = 0
-    # Use base64 for size calc if available, otherwise assume a standard size
-    if image_base64:
+    # Prioritize size calculation: Video Bytes > Image B64 > URL
+    if video_blob_data:
+        file_size_mb = len(video_blob_data) * 3 / 4 / (1024 * 1024)
+        source_for_hash = video_blob_data
+    elif image_base64:
         file_size_mb = len(image_base64) * 3 / 4 / (1024 * 1024)
+        source_for_hash = image_base64
     else:
-        file_size_mb = 2.0 # Default fallback for URL-only items
+        file_size_mb = 2.0 
+        source_for_hash = media_url
 
     if is_video:
+        # Simulate longer processing for raw video bytes
         processing_time = min(5, file_size_mb / 2)
-        print(f"[MOCK] Processing video... Source: {'B64' if image_base64 else 'URL'}")
+        print(f"[MOCK] Processing video... Mode: {'RAW BYTES' if video_blob_data else 'URL'}")
         time.sleep(processing_time) 
 
-    # 4. Generate hash based on whatever source we actually have
-    source_str = image_base64 if image_base64 else media_url
-    image_hash = hashlib.sha256(source_str[:100].encode()).hexdigest()
+    # 4. Generate hash
+    image_hash = hashlib.sha256(source_for_hash[:100].encode()).hexdigest()
 
     # 5. Result Logic
     is_ai = random.choice([True, False])
     confidence = random.uniform(85.0, 99.9) if random.random() > 0.2 else random.uniform(40.0, 60.0)
-
-    print(f"[MOCK] {'VIDEO' if is_video else 'IMAGE'} | Hash: {image_hash[:8]} | Result: {is_ai}")
 
     return jsonify({
         "ok": True,
         "is_ai": is_ai,
         "confidence": round(confidence, 2),
         "is_video_processed": is_video,
-        "processing_time": processing_time,
-        "cached": False,
+        "source_type": "blob" if video_blob_data else "url/b64",
         "hash": image_hash,
         "quota": quota_manager.get_status()
     })

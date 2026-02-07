@@ -10,20 +10,25 @@ export async function detectAIContent(mediaItem) {
             hash: mediaItem.hash,
             media_type: mediaType,
             media_url: mediaItem.url || mediaItem.media_url || null,
-            isVideo: mediaType === "video" // Explicit flag for your backend logic
+            isVideo: mediaType === "video"
         };
 
-        // Standardize Base64 key to match Flask data.get("base64")
+        // Handle Video Blob Data (ArrayBuffer converted to B64 in content.js)
+        if (mediaItem.videoData) {
+            payload.video_data = mediaItem.videoData;
+        }
+
+        // Standardize Image Base64 key
         if (mediaItem.base64 && typeof mediaItem.base64 === "string" && mediaItem.base64.length > 0) {
-            // We send the whole string; the backend already handles splitting at the comma
             payload.base64 = mediaItem.base64; 
         }
 
-        if (!payload.base64 && !payload.media_url) {
-            throw new Error("No image/video payload available");
+        // VALIDATION: We need at least one source
+        if (!payload.base64 && !payload.media_url && !payload.video_data) {
+            throw new Error("No media payload (B64, URL, or VideoData) available");
         }
 
-        console.log(`[AIFD] Forwarding ${mediaType} to Flask for hash: ${mediaItem.hash}`);
+        console.log(`[AIFD] Forwarding ${mediaType} to Flask. Source: ${payload.video_data ? 'Blob Bytes' : 'Standard'}`);
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000); 
@@ -43,22 +48,15 @@ export async function detectAIContent(mediaItem) {
 
         const data = await response.json();
         
-        // Ensure the return object matches what background.js:normalizeDetectionResult expects
         return {
             hash: data.hash || mediaItem.hash,
             isAI: data.is_ai ?? false,
-            score: data.confidence ?? 0, // background.js uses result.score
+            score: data.confidence ?? 0,
             fromMock: true
         };
 
     } catch (err) {
         console.error("%c[AIFD] PIPELINE ERROR:", "color: red; font-weight: bold;", err.message);
-        
-        return { 
-            hash: mediaItem.hash, 
-            score: 0, 
-            isAI: false, 
-            error: err.message 
-        };
+        return { hash: mediaItem.hash, score: 0, isAI: false, error: err.message };
     }
 }

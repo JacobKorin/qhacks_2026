@@ -141,13 +141,43 @@
                   vidEl.setAttribute("data-aifd-hash", item.hash);
               }
 
+              if (item.url.startsWith("blob:")) {
+                try {
+                  const response = await fetch(item.url);
+                  const arrayBuffer = await response.arrayBuffer();
+
+                  // Convert ArrayBuffer to Base64 for background transport.
+                  const base64Video = btoa(
+                    new Uint8Array(arrayBuffer)
+                      .reduce((data, byte) => data + String.fromCharCode(byte), "")
+                  );
+
+                  chrome.runtime.sendMessage({
+                    type: "SCAN_MEDIA_ITEMS",
+                    payload: {
+                      items: [{
+                        ...item,
+                        media_type: "video",
+                        media_url: item.posterUrl || null,
+                        videoData: base64Video,
+                        isVideo: true
+                      }],
+                      timestamp: Date.now()
+                    }
+                  });
+                  continue;
+                } catch (err) {
+                  console.error("[AIFD] Failed to fetch video blob bytes:", err);
+                }
+              }
+
               chrome.runtime.sendMessage({
                   type: "SCAN_MEDIA_ITEMS",
                   payload: {
                       items: [{ 
                           ...item, 
                           media_type: "video", // Helps backend detection
-                          media_url: item.url,  // Critical fallback
+                          media_url: item.posterUrl || item.url,  // Prefer non-blob URL when available
                           isVideo: true 
                       }],
                       timestamp: Date.now()
