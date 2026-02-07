@@ -4,6 +4,7 @@ import { getCachedDetection, setCachedDetection } from "./cache.js";
 const READY_MESSAGE = "AIFD_CONTENT_READY";
 const SCAN_MESSAGE = "SCAN_MEDIA_ITEMS";
 const STATS_KEY = "aifd_stats";
+const SETTINGS_KEY = "aifd_settings";
 const FLAG_THRESHOLD = 0.75;
 let statsWriteChain = Promise.resolve();
 
@@ -69,6 +70,12 @@ function enqueueStatsUpdate(scannedDelta, flaggedDelta) {
   return statsWriteChain;
 }
 
+async function isExtensionEnabled() {
+  const stored = await chrome.storage.local.get([SETTINGS_KEY]);
+  const settings = stored[SETTINGS_KEY] || {};
+  return settings.extensionEnabled !== false;
+}
+
 function normalizeDetectionResult(item, result) {
   const score = Number(result?.score ?? 0);
   const isAI = typeof result?.isAI === "boolean" ? result.isAI : score >= FLAG_THRESHOLD;
@@ -82,6 +89,10 @@ function normalizeDetectionResult(item, result) {
 
 async function processOneItem(item, tabId) {
   try {
+    if (!(await isExtensionEnabled())) {
+      return;
+    }
+
     const cachedResult = await getCachedDetection(item.hash);
     let normalizedResult = null;
 
@@ -106,6 +117,10 @@ async function processOneItem(item, tabId) {
 
 async function processItems(items, tabId) {
   if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+
+  if (!(await isExtensionEnabled())) {
     return;
   }
 

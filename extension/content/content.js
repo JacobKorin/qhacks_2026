@@ -1,11 +1,17 @@
-(function bootstrapContentScript() {
+(async function bootstrapContentScript() {
   if (window.__aiFeedDetectorInitialized) {
     return;
   }
   window.__aiFeedDetectorInitialized = true;
 
   const READY_MESSAGE = "AIFD_CONTENT_READY";
+  const SETTINGS_KEY = "aifd_settings";
+  const DEFAULT_SETTINGS = {
+    extensionEnabled: true,
+    showRiskRail: true,
+  };
   const pageUrl = window.location.href;
+  let currentSettings = { ...DEFAULT_SETTINGS };
 
   console.log("[AI Feed Detector] Content script loaded:", pageUrl);
 
@@ -31,7 +37,31 @@
     console.warn("[AI Feed Detector] Unable to message background:", error);
   }
 
+  async function loadSettings() {
+    const stored = await chrome.storage.local.get([SETTINGS_KEY]);
+    currentSettings = {
+      ...DEFAULT_SETTINGS,
+      ...(stored[SETTINGS_KEY] || {}),
+    };
+  }
+
+  function subscribeSettingsChanges() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes[SETTINGS_KEY]) {
+        return;
+      }
+
+      currentSettings = {
+        ...DEFAULT_SETTINGS,
+        ...(changes[SETTINGS_KEY].newValue || {}),
+      };
+    });
+  }
+
   try {
+    await loadSettings();
+    subscribeSettingsChanges();
+
     const observerApi = window.AIFeedDetectorObserver;
     if (!observerApi || typeof observerApi.createPostObserver !== "function") {
       console.warn("[AI Feed Detector] Post observer API is unavailable");
@@ -45,6 +75,10 @@
 
     const postObserver = observerApi.createPostObserver({
       onPostsDetected(posts) {
+        if (!currentSettings.extensionEnabled) {
+          return;
+        }
+
         console.log(
           `[AI Feed Detector] Detected ${posts.length} new post(s) in feed`
         );

@@ -5,7 +5,6 @@ const STORAGE_KEYS = {
 
 const DEFAULT_SETTINGS = {
   extensionEnabled: true,
-  autoScanFeed: true,
   showRiskRail: true,
 };
 
@@ -23,7 +22,6 @@ const ui = {
   lastScan: document.getElementById("last-scan"),
   resetStats: document.getElementById("reset-stats"),
   toggleEnabled: document.getElementById("toggle-enabled"),
-  toggleAutoScan: document.getElementById("toggle-auto-scan"),
   toggleRiskRail: document.getElementById("toggle-risk-rail"),
 };
 
@@ -53,7 +51,6 @@ function formatLastScan(lastScanAt) {
 
 function renderSettings() {
   ui.toggleEnabled.checked = Boolean(currentSettings.extensionEnabled);
-  ui.toggleAutoScan.checked = Boolean(currentSettings.autoScanFeed);
   ui.toggleRiskRail.checked = Boolean(currentSettings.showRiskRail);
 
   ui.statusText.textContent = currentSettings.extensionEnabled
@@ -96,12 +93,6 @@ function attachHandlers() {
     currentSettings.extensionEnabled = event.target.checked;
     await saveSettings();
     renderSettings();
-    notifySettingsChanged();
-  });
-
-  ui.toggleAutoScan.addEventListener("change", async (event) => {
-    currentSettings.autoScanFeed = event.target.checked;
-    await saveSettings();
     notifySettingsChanged();
   });
 
