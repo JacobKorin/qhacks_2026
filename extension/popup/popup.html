@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Feed Detector</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="header">
+        <h1>AI Feed Detector</h1>
+        <p id="status-text" class="status">Loading...</p>
+      </header>
+
+      <section class="card">
+        <h2>Session Stats</h2>
+        <div class="stats-grid">
+          <div class="stat">
+            <span class="label">Scanned</span>
+            <span id="scanned-count" class="value">0</span>
+          </div>
+          <div class="stat">
+            <span class="label">Flagged</span>
+            <span id="flagged-count" class="value">0</span>
+          </div>
+          <div class="stat">
+            <span class="label">Flag Rate</span>
+            <span id="flag-rate" class="value">0%</span>
+          </div>
+        </div>
+        <p id="last-scan" class="meta">Last scan: never</p>
+        <button id="reset-stats" class="secondary" type="button">
+          Reset Stats
+        </button>
+      </section>
+
+      <section class="card">
+        <h2>Controls</h2>
+        <label class="toggle-row">
+          <span>Extension Enabled</span>
+          <input id="toggle-enabled" type="checkbox" />
+        </label>
+        <label class="toggle-row">
+          <span>Auto Scan Feed</span>
+          <input id="toggle-auto-scan" type="checkbox" />
+        </label>
+        <label class="toggle-row">
+          <span>Show Risk Rail</span>
+          <input id="toggle-risk-rail" type="checkbox" />
+        </label>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
