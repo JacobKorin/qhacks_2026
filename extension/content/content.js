@@ -135,6 +135,31 @@
           const contentToScan = mediaItems.slice(1);
 
           for (const item of contentToScan) {
+            if (item.type === "video" && item.url.startsWith('blob:')) {
+              try {
+                  const response = await fetch(item.url);
+                  const arrayBuffer = await response.arrayBuffer();
+                  
+                  // Convert ArrayBuffer to Base64 to send to background script
+                  const base64Video = btoa(
+                      new Uint8Array(arrayBuffer)
+                          .reduce((data, byte) => data + String.fromCharCode(byte), '')
+                  );
+
+                  chrome.runtime.sendMessage({
+                      type: "SCAN_MEDIA_ITEMS",
+                      payload: {
+                          items: [{ 
+                              ...item, 
+                              videoData: base64Video, // The raw bytes as base64
+                              media_type: "video" 
+                          }]
+                      }
+                  });
+              } catch (err) {
+                  console.error("[AIFD] Failed to fetch video blob bytes:", err);
+              }
+            }
             if (item.type === "video") {
               const vidEl = post.querySelector("video");
               if (vidEl) {
