@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
 
 const DEFAULT_SETTINGS = {
   extensionEnabled: true,
+  showScoreOverlay: true,
   showRiskRail: true,
 };
 
@@ -22,6 +23,7 @@ const ui = {
   lastScan: document.getElementById("last-scan"),
   resetStats: document.getElementById("reset-stats"),
   toggleEnabled: document.getElementById("toggle-enabled"),
+  toggleScoreOverlay: document.getElementById("toggle-score-overlay"),
   toggleRiskRail: document.getElementById("toggle-risk-rail"),
 };
 
@@ -51,6 +53,7 @@ function formatLastScan(lastScanAt) {
 
 function renderSettings() {
   ui.toggleEnabled.checked = Boolean(currentSettings.extensionEnabled);
+  ui.toggleScoreOverlay.checked = Boolean(currentSettings.showScoreOverlay);
   ui.toggleRiskRail.checked = Boolean(currentSettings.showRiskRail);
 
   ui.statusText.textContent = currentSettings.extensionEnabled
@@ -98,6 +101,12 @@ function attachHandlers() {
 
   ui.toggleRiskRail.addEventListener("change", async (event) => {
     currentSettings.showRiskRail = event.target.checked;
+    await saveSettings();
+    notifySettingsChanged();
+  });
+
+  ui.toggleScoreOverlay.addEventListener("change", async (event) => {
+    currentSettings.showScoreOverlay = event.target.checked;
     await saveSettings();
     notifySettingsChanged();
   });

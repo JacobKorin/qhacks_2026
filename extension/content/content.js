@@ -8,10 +8,12 @@
   const SETTINGS_KEY = "aifd_settings";
   const DEFAULT_SETTINGS = {
     extensionEnabled: true,
+    showScoreOverlay: true,
     showRiskRail: true,
   };
   const pageUrl = window.location.href;
   let currentSettings = { ...DEFAULT_SETTINGS };
+  const detectionResultsByHash = new Map();
 
   console.log("[AI Feed Detector] Content script loaded:", pageUrl);
 
@@ -48,11 +50,39 @@
         return;
       }
 
+      const previousShowScoreOverlay = currentSettings.showScoreOverlay;
       currentSettings = {
         ...DEFAULT_SETTINGS,
         ...(changes[SETTINGS_KEY].newValue || {}),
       };
+
+      if (previousShowScoreOverlay && !currentSettings.showScoreOverlay) {
+        document.querySelectorAll(".aifd-badge-side").forEach((badge) => {
+          badge.remove();
+        });
+      } else if (!previousShowScoreOverlay && currentSettings.showScoreOverlay) {
+        replayStoredBadges();
+      }
     });
+  }
+
+  function renderBadge(payload) {
+    if (!window.AIFeedDetectorOverlay) {
+      console.warn("[AIFD] Overlay API not found");
+      return;
+    }
+
+    window.AIFeedDetectorOverlay.renderBadgeOnImage(
+      payload.hash,
+      payload.isAI,
+      payload.score
+    );
+  }
+
+  function replayStoredBadges() {
+    for (const payload of detectionResultsByHash.values()) {
+      renderBadge(payload);
+    }
   }
 
   try {
@@ -137,12 +167,15 @@
       console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", message.payload);
       
       const { hash, score, isAI } = message.payload;
-      
-      if (window.AIFeedDetectorOverlay) {
-        window.AIFeedDetectorOverlay.renderBadgeOnImage(hash, isAI, score);
-      } else {
-        console.warn("[AIFD] Overlay API not found");
+      const payload = { hash, score, isAI };
+      detectionResultsByHash.set(hash, payload);
+
+      if (!currentSettings.showScoreOverlay) {
+        sendResponse({ status: "overlay_disabled" });
+        return true;
       }
+
+      renderBadge(payload);
       
       sendResponse({ status: "badge_rendered" });
     }
