@@ -29,7 +29,8 @@
         "content/observer.js",
         "content/extractMedia.js",
         "content/overlay.js",
-        "content/content.js"
+        "content/content.js", 
+        "content/riskRail.js"
       ],
       "run_at": "document_idle"
     }
