@@ -59,6 +59,17 @@
         ...(changes[SETTINGS_KEY].newValue || {}),
       };
 
+      if (!currentSettings.extensionEnabled) {
+        console.log("[AIFD] Extension disabled: Cleaning up UI...");
+        // Remove all badges
+        document.querySelectorAll(".aifd-badge-side").forEach(b => b.remove());
+        // Hide Risk Rail if it exists
+        if (window.AIFeedDetectorRiskRail) {
+          window.AIFeedDetectorRiskRail.setVisibility(false);
+        }
+        return; // Stop here
+      }
+
       if (previousShowScoreOverlay && !currentSettings.showScoreOverlay) {
         document.querySelectorAll(".aifd-badge-side").forEach((badge) => {
           badge.remove();

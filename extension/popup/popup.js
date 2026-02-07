@@ -39,24 +39,43 @@ function mergeStats(raw) {
 }
 
 function formatLastScan(lastScanAt) {
-  if (!lastScanAt) {
-    return "Last scan: never";
-  }
-
+  if (!lastScanAt) return "Last scan: never";
   const parsedDate = new Date(lastScanAt);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return "Last scan: unknown";
-  }
-
+  if (Number.isNaN(parsedDate.getTime())) return "Last scan: unknown";
   return `Last scan: ${parsedDate.toLocaleString()}`;
 }
 
+/**
+ * UPDATED: Implements Master Kill Switch UI logic
+ */
 function renderSettings() {
-  ui.toggleEnabled.checked = Boolean(currentSettings.extensionEnabled);
-  ui.toggleScoreOverlay.checked = Boolean(currentSettings.showScoreOverlay);
-  ui.toggleRiskRail.checked = Boolean(currentSettings.showRiskRail);
+  const isMasterEnabled = Boolean(currentSettings.extensionEnabled);
+  
+  // Set master toggle state
+  ui.toggleEnabled.checked = isMasterEnabled;
 
-  ui.statusText.textContent = currentSettings.extensionEnabled
+  // Sub-toggles: 
+  // 1. Visually uncheck if master is off, otherwise show saved state
+  ui.toggleScoreOverlay.checked = isMasterEnabled ? Boolean(currentSettings.showScoreOverlay) : false;
+  ui.toggleRiskRail.checked = isMasterEnabled ? Boolean(currentSettings.showRiskRail) : false;
+
+  // 2. Disable interaction if master is off
+  ui.toggleScoreOverlay.disabled = !isMasterEnabled;
+  ui.toggleRiskRail.disabled = !isMasterEnabled;
+
+  // 3. Visual feedback for rows (greying out)
+  const subToggles = [ui.toggleScoreOverlay, ui.toggleRiskRail];
+  subToggles.forEach(toggle => {
+    // Looks for a container div with class 'setting-row' or similar
+    const container = toggle.closest('.setting-row') || toggle.parentElement;
+    if (container) {
+      container.style.opacity = isMasterEnabled ? "1" : "0.5";
+      container.style.pointerEvents = isMasterEnabled ? "auto" : "none";
+      container.style.transition = "opacity 0.2s ease";
+    }
+  });
+
+  ui.statusText.textContent = isMasterEnabled
     ? "Active on supported pages"
     : "Paused";
 }
@@ -95,7 +114,7 @@ function attachHandlers() {
   ui.toggleEnabled.addEventListener("change", async (event) => {
     currentSettings.extensionEnabled = event.target.checked;
     await saveSettings();
-    renderSettings();
+    renderSettings(); // UI will handle disabling sub-toggles
     notifySettingsChanged();
   });
 
@@ -120,9 +139,7 @@ function attachHandlers() {
 
 function subscribeStorageChanges() {
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") {
-      return;
-    }
+    if (areaName !== "local") return;
 
     if (changes[STORAGE_KEYS.settings]) {
       currentSettings = mergeSettings(changes[STORAGE_KEYS.settings].newValue);
