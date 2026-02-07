@@ -124,73 +124,65 @@
           const contentToScan = mediaItems.slice(1);
 
           for (const item of contentToScan) {
-            if (item.type === 'video') {
-              const vidEl = post.querySelector('video');
-              if (!vidEl || (!vidEl.src && !vidEl.currentSrc)) {
-                console.warn("[AIFD] Source undefined. Retrying in 1s...");
-                setTimeout(() => processSpecificPost(post), 1000); // Recursive retry
-                
-                return;
+            if (item.type === "video") {
+              const vidEl = post.querySelector("video");
+              if (vidEl) {
+                vidEl.setAttribute("data-aifd-hash", item.hash);
               }
-              const videoUrl = vidEl.currentSrc || vidEl.src;
-              vidEl.setAttribute('data-aifd-hash', item.hash);
-              fetch(videoUrl)
-                .then(r => r.blob())
-                .then(blob => {
-                  const reader = new FileReader();
-                  reader.readAsDataURL(blob);
-                  reader.onloadend = () => {
-                    const vidEl = post.querySelector('video');
-                    if(vidEl) vidEl.setAttribute('data-aifd-hash', item.hash);
 
-                      chrome.runtime.sendMessage({
-                        type: "SCAN_MEDIA_ITEMS",
-                        payload: {
-                          items: [{ ...item, base64: reader.result, isVideo: true }]
-                        }
-                      });
-                  };
-                });
-            } else {
-              try {
-                // 1. IMPROVED SEARCH: Look for images that CONTAIN the base URL
-                // We strip parameters after '?' to find the raw filename match
-                const baseUrl = item.url.split('?')[0];
-                const imgElements = Array.from(post.querySelectorAll('img'));
-                const imgElement = imgElements.find(img => img.src.includes(baseUrl));
-
-                if (!imgElement) {
-                  console.warn("[AIFD] Image element still not found for:", baseUrl);
-                  continue;
+              chrome.runtime.sendMessage({
+                type: "SCAN_MEDIA_ITEMS",
+                payload: {
+                  items: [{ ...item, isVideo: true }],
+                  timestamp: Date.now()
                 }
+              });
+              continue;
+            }
 
-                // 2. CANVAS CAPTURE
-                const canvas = document.createElement('canvas');
+            let payloadItem = { ...item };
+
+            try {
+              const baseUrl = item.url.split("?")[0];
+              const imgElements = Array.from(post.querySelectorAll("img"));
+              const imgElement = imgElements.find((img) => {
+                const candidate = img.currentSrc || img.src || "";
+                return candidate.includes(baseUrl);
+              });
+
+              if (imgElement) {
+                const canvas = document.createElement("canvas");
                 canvas.width = imgElement.naturalWidth;
                 canvas.height = imgElement.naturalHeight;
-                const ctx = canvas.getContext('2d');
+                const ctx = canvas.getContext("2d");
 
-                // Crucial: Instagram images usually allow cross-origin if the tag has this
-                imgElement.crossOrigin = "anonymous";
+                if (canvas.width > 0 && canvas.height > 0 && ctx) {
+                  imgElement.crossOrigin = "anonymous";
+                  ctx.drawImage(imgElement, 0, 0);
 
-                ctx.drawImage(imgElement, 0, 0);
-                const base64Data = canvas.toDataURL('image/jpeg', 0.8);
+                  const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+                  const encoded = dataUrl.includes(",")
+                    ? dataUrl.split(",", 2)[1]
+                    : "";
 
-                console.log("%c[AIFD] Successfully captured pixels via Canvas", "color: #00D1FF", item.hash);
-
-                imgElement.setAttribute('data-aifd-hash', item.hash);
-
-                chrome.runtime.sendMessage({
-                  type: "SCAN_MEDIA_ITEMS",
-                  payload: {
-                    items: [{ ...item, base64: base64Data }],
-                    timestamp: Date.now()
+                  if (encoded.length > 0) {
+                    payloadItem.base64 = dataUrl;
                   }
-                });
-              } catch (err) {
-                console.error("[AIFD] Canvas capture failed (Tainted Canvas?):", err);
+                }
+
+                imgElement.setAttribute("data-aifd-hash", item.hash);
               }
+            } catch (err) {
+              console.warn("[AIFD] Canvas capture unavailable; using URL fallback:", err.message);
             }
+
+            chrome.runtime.sendMessage({
+              type: "SCAN_MEDIA_ITEMS",
+              payload: {
+                items: [payloadItem],
+                timestamp: Date.now()
+              }
+            });
           }
         }
       },
@@ -208,18 +200,6 @@
       console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", message.payload);
       
       const { hash, score, isAI } = message.payload;
-      
-      if (!document.querySelector(`[data-aifd-hash="${hash}"]`)) {
-        // Find the video or image that matches the URL we scanned
-        const mediaElements = document.querySelectorAll('video, img');
-        for (const el of mediaElements) {
-          if (el.src === url || (el.currentSrc && el.currentSrc === url)) {
-            el.setAttribute('data-aifd-hash', hash);
-            console.log("[AIFD] Re-tagged media element after result arrived");
-            break;
-          }
-        }
-      }
 
       const payload = { hash, score, isAI };
       detectionResultsByHash.set(hash, payload);

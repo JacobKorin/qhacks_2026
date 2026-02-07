@@ -30,7 +30,10 @@
 
   function extractMediaFromPost(postElement) {
     if (!(postElement instanceof Element)) return [];
-    utils = globalScope.AIFeedDetectorUtils;
+    const utils = globalScope.AIFeedDetectorUtils;
+    if (!utils) {
+      return [];
+    }
     const mediaItems = [];
 
     const profilePic = postElement.querySelector('header img, canvas._aadp');
