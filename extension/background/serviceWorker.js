@@ -1,7 +1,16 @@
 import { detectAIContent } from "./detectClient.js";
+import { createTaskQueue } from "./queue.js";
+import { getCachedDetection, setCachedDetection } from "./cache.js";
 const READY_MESSAGE = "AIFD_CONTENT_READY";
 const SCAN_MESSAGE = "SCAN_MEDIA_ITEMS";
 const STATS_KEY = "aifd_stats";
+const FLAG_THRESHOLD = 0.75;
+let statsWriteChain = Promise.resolve();
+
+const detectionQueue = createTaskQueue({
+  concurrency: 3,
+  delayMs: 120,
+});
 
 console.log("[AI Feed Detector] Service worker initialized");
 
@@ -37,42 +46,78 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false; // Not a message type we handle
 });
 
-async function incrementScannedCount() {
-  const stored = await chrome.storage.local.get([STATS_KEY]);
-  
-  // Get existing stats or use defaults if empty
-  const stats = stored[STATS_KEY] || { 
-    scannedCount: 0, 
-    flaggedCount: 0, 
-    lastScanAt: null 
+function enqueueStatsUpdate(scannedDelta, flaggedDelta) {
+  statsWriteChain = statsWriteChain
+    .then(async () => {
+      const stored = await chrome.storage.local.get([STATS_KEY]);
+      const stats = stored[STATS_KEY] || {
+        scannedCount: 0,
+        flaggedCount: 0,
+        lastScanAt: null,
+      };
+
+      stats.scannedCount += scannedDelta;
+      stats.flaggedCount += flaggedDelta;
+      stats.lastScanAt = Date.now();
+
+      await chrome.storage.local.set({ [STATS_KEY]: stats });
+    })
+    .catch((error) => {
+      console.error("[AI Feed Detector] Stats update error:", error);
+    });
+
+  return statsWriteChain;
+}
+
+function normalizeDetectionResult(item, result) {
+  const score = Number(result?.score ?? 0);
+  const isAI = typeof result?.isAI === "boolean" ? result.isAI : score >= FLAG_THRESHOLD;
+
+  return {
+    hash: item.hash,
+    score,
+    isAI,
   };
+}
 
-  // Increment ONLY the scanned count
-  stats.scannedCount += 1;
-  stats.lastScanAt = Date.now();
+async function processOneItem(item, tabId) {
+  try {
+    const cachedResult = await getCachedDetection(item.hash);
+    let normalizedResult = null;
 
-  // Save the updated object back to storage
-  await chrome.storage.local.set({ [STATS_KEY]: stats });
+    if (cachedResult) {
+      normalizedResult = normalizeDetectionResult(item, cachedResult);
+      console.log(`[AI Feed Detector] Cache hit: ${item.hash}`);
+    } else {
+      console.log(`[AI Feed Detector] Cache miss: ${item.hash} (calling backend)`);
+      normalizedResult = normalizeDetectionResult(item, await detectAIContent(item));
+      await setCachedDetection(item.hash, normalizedResult);
+      await enqueueStatsUpdate(1, normalizedResult.isAI ? 1 : 0);
+    }
+
+    await chrome.tabs.sendMessage(tabId, {
+      type: "RENDER_BADGE",
+      payload: normalizedResult,
+    });
+  } catch (error) {
+    console.error("[AI Feed Detector] Item processing error:", error);
+  }
 }
 
 async function processItems(items, tabId) {
-  for (const item of items) {
-    try {
-      const result = await detectAIContent(item);
-      
-      await incrementScannedCount();
+  if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
 
-      // Send results back to overlay.js in the content script
-      chrome.tabs.sendMessage(tabId, {
-        type: "RENDER_BADGE",
-        payload: {
-          hash: item.hash,
-          score: result.score,
-          isAI: result.isAI
-        }
-      });
-    } catch (error) {
-      console.error("[AI Feed Detector] Item processing error:", error);
+  const uniqueItemsByHash = new Map();
+  for (const item of items) {
+    if (!item || !item.hash || uniqueItemsByHash.has(item.hash)) {
+      continue;
     }
+    uniqueItemsByHash.set(item.hash, item);
+  }
+
+  for (const item of uniqueItemsByHash.values()) {
+    detectionQueue.enqueue(() => processOneItem(item, tabId));
   }
 }
