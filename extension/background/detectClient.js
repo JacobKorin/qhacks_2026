@@ -1,12 +1,29 @@
 // background/detectClient.js
 
 export async function detectAIContent(mediaItem) {
-    const API_URL = "http://localhost:3500/mock/detect"; 
+    const API_URL = "http://localhost:3500/detect";
 
     try {
-        // If content.js didn't provide base64, we can't proceed (avoids the 403)
-        if (!mediaItem.base64) {
-            throw new Error("No image data provided by content script");
+        const mediaType = mediaItem.type === "video" ? "video" : "image";
+        const payload = {
+            hash: mediaItem.hash,
+            media_type: mediaType,
+            media_url: mediaItem.url || null
+        };
+
+        if (
+            typeof mediaItem.base64 === "string" &&
+            mediaItem.base64.length > 0 &&
+            mediaItem.base64.includes(",")
+        ) {
+            const encoded = mediaItem.base64.split(",", 2)[1] || "";
+            if (encoded.length > 0) {
+            payload.image = mediaItem.base64;
+            }
+        }
+
+        if (!payload.image && !payload.media_url) {
+            throw new Error("No image/video payload available");
         }
 
         console.log(`[AIFD] Forwarding data to Flask for hash: ${mediaItem.hash}`);
@@ -18,11 +35,7 @@ export async function detectAIContent(mediaItem) {
             method: "POST",
             signal: controller.signal,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                image: mediaItem.base64,
-                isVideo: mediaItem.isVideo || false,
-                hash: mediaItem.hash 
-            })
+            body: JSON.stringify(payload)
         });
         clearTimeout(timeoutId);
 
@@ -39,7 +52,7 @@ export async function detectAIContent(mediaItem) {
             hash: mediaItem.hash,
             isAI: data.is_ai ?? false,
             score: data.confidence ?? 0,
-            fromMock: true
+            fromMock: false
         };
 
     } catch (err) {

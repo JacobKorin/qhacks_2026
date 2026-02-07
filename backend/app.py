@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hashlib
+import mimetypes
 import os
 import uuid
 import random
@@ -29,7 +30,8 @@ CORS(app)
 
 # Configuration for AI detection
 AI_OR_NOT_API_KEY = os.getenv('AI_OR_NOT_API_KEY')
-AI_OR_NOT_API_URL = "https://api.aiornot.com/v2/image/sync"  # Verify this URL
+AI_OR_NOT_IMAGE_API_URL = "https://api.aiornot.com/v2/image/sync"
+AI_OR_NOT_VIDEO_API_URL = "https://api.aiornot.com/v2/video/sync"
 QUOTA_LIMIT = int(os.getenv('QUOTA_LIMIT', '10'))
 
 # Quota management
@@ -109,21 +111,86 @@ def _generate_image_hash(data: bytes) -> str:
     """Generate hash for image data for caching"""
     return hashlib.sha256(data).hexdigest()
 
-def _call_ai_detection_api(image_data_base64: str) -> dict:
-    """Call AI or Not API with the image data"""
+def _guess_content_type(filename: Optional[str], media_type: str) -> str:
+    if filename:
+        guessed, _ = mimetypes.guess_type(filename)
+        if guessed:
+            return guessed
+    return "video/mp4" if media_type == "video" else "image/jpeg"
+
+def _call_ai_detection_api(media_bytes: bytes, media_type: str, filename: Optional[str]) -> dict:
+    """Call AI or Not API with multipart media bytes."""
+    endpoint = AI_OR_NOT_VIDEO_API_URL if media_type == "video" else AI_OR_NOT_IMAGE_API_URL
+    field_name = "video" if media_type == "video" else "image"
+    effective_name = filename or ("upload.mp4" if media_type == "video" else "upload.jpg")
+    content_type = _guess_content_type(effective_name, media_type)
+
     headers = {
         "Authorization": f"Bearer {AI_OR_NOT_API_KEY}",
-        "Content-Type": "application/json"
+        "Accept": "application/json",
     }
-    
-    payload = {
-        "image": image_data_base64,
-        "model": "v2"  # Check AI or Not API documentation for correct model
+
+    files = {
+        field_name: (effective_name, media_bytes, content_type),
     }
-    
-    response = requests.post(AI_OR_NOT_API_URL, json=payload, headers=headers, timeout=30)
+
+    print(
+        f"[AIFD][AIORNOT] request endpoint={endpoint} media_type={media_type} "
+        f"filename={effective_name} bytes={len(media_bytes)}"
+    )
+
+    try:
+        response = requests.post(endpoint, files=files, headers=headers, timeout=60)
+    except requests.Timeout as exc:
+        print(f"[AIFD][AIORNOT] timeout media_type={media_type}: {exc}")
+        raise
+    except requests.RequestException as exc:
+        print(f"[AIFD][AIORNOT] network error media_type={media_type}: {exc}")
+        raise
+
+    body_preview = response.text[:500] if response.text else ""
+    print(
+        f"[AIFD][AIORNOT] response status={response.status_code} "
+        f"media_type={media_type} body_preview={body_preview!r}"
+    )
+
     response.raise_for_status()
     return response.json()
+
+def _normalize_aiornot_response(api_response: dict) -> Tuple[bool, float]:
+    """
+    Normalize AI or Not response into (is_ai, confidence_percent).
+    Confidence is mapped to AI confidence in [0, 100].
+    """
+    report = api_response.get("report", {}) if isinstance(api_response, dict) else {}
+
+    candidates = [
+        report.get("ai_generated", {}),
+        report.get("ai_video", {}),
+        report,
+    ]
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+
+        verdict = str(candidate.get("verdict", "")).lower()
+        ai_obj = candidate.get("ai")
+        ai_conf = None
+
+        if isinstance(ai_obj, dict) and isinstance(ai_obj.get("confidence"), (int, float)):
+            ai_conf = float(ai_obj["confidence"])
+        elif isinstance(candidate.get("confidence"), (int, float)):
+            ai_conf = float(candidate["confidence"])
+
+        if ai_conf is not None:
+            if ai_conf > 1:
+                ai_conf = ai_conf / 100.0
+            ai_conf = max(0.0, min(1.0, ai_conf))
+            is_ai = verdict == "ai" if verdict in {"ai", "human"} else ai_conf >= 0.5
+            return is_ai, round(ai_conf * 100.0, 2)
+
+    return False, 0.0
 
 def _clean_old_cache_entries():
     """Remove cache entries older than 24 hours"""
@@ -178,6 +245,12 @@ def health():
 def detect_image():
     """Analyze image for AI generation using AI or Not API"""
     try:
+        if not AI_OR_NOT_API_KEY:
+            return jsonify({"ok": False, "error": "Missing AI_OR_NOT_API_KEY in environment"}), 500
+
+        payload = request.get_json(silent=True) or {}
+        media_type = "video" if payload.get("media_type") == "video" else "image"
+
         # Determine input format
         if "file" in request.files:
             # Handle file upload
@@ -188,31 +261,44 @@ def detect_image():
             image_bytes = upload.read()
             if not image_bytes:
                 return jsonify({"ok": False, "error": "Empty image file"}), 400
-            
-            # Convert to base64 for API
-            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+
             image_hash = _generate_image_hash(image_bytes)
-            
+            source_filename = upload.filename
+
         else:
-            # Handle JSON payload with base64 image
-            payload = request.get_json(silent=True) or {}
+            # Handle JSON payload with base64 image or media URL
             image_base64 = payload.get("image")
+            media_url = payload.get("media_url") or payload.get("url")
             
-            if not image_base64:
-                return jsonify({"ok": False, "error": "No image data provided"}), 400
-            
-            # Extract pure base64 data
-            if image_base64.startswith('data:image'):
-                # Remove data URL prefix
-                image_base64 = image_base64.split(',')[1]
-            
-            try:
-                image_bytes = base64.b64decode(image_base64, validate=True)
-            except (binascii.Error, ValueError) as exc:
-                return jsonify({"ok": False, "error": f"Invalid base64: {exc}"}), 400
-            
-            image_b64 = image_base64  # Already in base64 format
-            image_hash = _generate_image_hash(image_bytes)
+            if image_base64:
+                if image_base64.startswith('data:'):
+                    image_base64 = image_base64.split(',', 1)[1]
+
+                try:
+                    image_bytes = base64.b64decode(image_base64, validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    return jsonify({"ok": False, "error": f"Invalid base64: {exc}"}), 400
+
+                if not image_bytes:
+                    return jsonify({"ok": False, "error": "Empty decoded image payload"}), 400
+
+                image_hash = _generate_image_hash(image_bytes)
+                source_filename = "inline-upload.mp4" if media_type == "video" else "inline-upload.jpg"
+            elif media_url:
+                try:
+                    response = requests.get(media_url, timeout=20)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                except requests.RequestException as exc:
+                    return jsonify({"ok": False, "error": f"Failed to fetch media_url: {exc}"}), 400
+
+                if not image_bytes:
+                    return jsonify({"ok": False, "error": "Fetched media_url returned empty body"}), 400
+
+                image_hash = _generate_image_hash(image_bytes)
+                source_filename = Path(media_url).name or ("remote.mp4" if media_type == "video" else "remote.jpg")
+            else:
+                return jsonify({"ok": False, "error": "No image or media_url provided"}), 400
         
         # Check cache first
         if image_hash in cache:
@@ -236,17 +322,10 @@ def detect_image():
         
         # Call AI detection API
         try:
-            api_response = _call_ai_detection_api(image_b64)
-            
-            # Parse API response (adjust based on actual API response format)
-            # Expected format: {"ai_probability": 0.85, "is_ai": true}
-            ai_probability = api_response.get("ai_probability", 0)
-            is_ai = api_response.get("is_ai", ai_probability > 0.5)
-            
-            result = {
-                "is_ai": is_ai,
-                "confidence": ai_probability * 100
-            }
+            api_response = _call_ai_detection_api(image_bytes, media_type, source_filename)
+            is_ai, confidence = _normalize_aiornot_response(api_response)
+
+            result = {"is_ai": is_ai, "confidence": confidence}
             
             # Use quota credit
             quota_manager.use_credit()
@@ -264,9 +343,10 @@ def detect_image():
             return jsonify({
                 "ok": True,
                 "is_ai": is_ai,
-                "confidence": ai_probability * 100,
+                "confidence": confidence,
                 "cached": False,
                 "hash": image_hash,
+                "media_type": media_type,
                 "quota": quota_manager.get_status()
             })
             

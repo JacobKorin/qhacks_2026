@@ -10,8 +10,7 @@
         return null;
       }
 
-      // Remove volatile params to improve cache hit rates for the same media.
-      parsed.search = "";
+      // Keep query params because signed media URLs often require them.
       parsed.hash = "";
       return parsed.toString();
     } catch (error) {
