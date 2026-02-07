@@ -58,8 +58,11 @@
     if (video) {
       const vSrc = video.currentSrc || video.src;
       if (vSrc) {
+        const posterSrc = video.poster || "";
         mediaItems.push({
-          url: vSrc.startsWith('blob:') ? video.poster : vSrc,
+          // Keep blob URL intact so content.js can fetch bytes from it.
+          url: vSrc,
+          posterUrl: posterSrc,
           type: 'video', // LABELING as video
           hash: utils.hashString(vSrc)
         });
