@@ -476,6 +476,7 @@
                         payload: {
                           items: [{
                             hash: item.hash,
+                            type: "image", // Treat as image
                             media_type: "image", // Send as image!
                             media_url: item.posterUrl,
                             base64: dataUrl,
@@ -496,14 +497,16 @@
                 continue;
               }
 
-              // Non-blob videos: send normally
+              // Non-blob videos: send normally (explicit payload to avoid leaking blob URLs)
               chrome.runtime.sendMessage({
                   type: "SCAN_MEDIA_ITEMS",
                   payload: {
                       items: [{ 
-                          ...item, 
+                          hash: item.hash,
+                          type: item.type,
                           media_type: "video",
                           media_url: item.posterUrl || item.url,
+                          posterUrl: item.posterUrl,
                           isVideo: true 
                       }],
                       timestamp: Date.now()

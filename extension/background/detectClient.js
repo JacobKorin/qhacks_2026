@@ -6,10 +6,17 @@ export async function detectAIContent(mediaItem) {
     try {
         const mediaType = mediaItem.type === "video" || mediaItem.isVideo ? "video" : "image";
         
+        // Extract media_url but NEVER send blob URLs
+        let mediaUrl = mediaItem.url || mediaItem.media_url || null;
+        if (mediaUrl && mediaUrl.startsWith("blob:")) {
+            console.warn("[AIFD] Blob URL detected in detectClient, removing it:", mediaUrl);
+            mediaUrl = null; // Don't send blob URLs to backend
+        }
+        
         const payload = {
             hash: mediaItem.hash,
             media_type: mediaType,
-            media_url: mediaItem.url || mediaItem.media_url || null,
+            media_url: mediaUrl,
             isVideo: mediaType === "video"
         };
 
