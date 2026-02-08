@@ -443,43 +443,67 @@
                   vidEl.setAttribute("data-aifd-hash", item.hash);
               }
 
+              // SHORT CIRCUIT: If blob video, convert poster image to base64 and send as image
               if (item.url.startsWith("blob:")) {
-                try {
-                  const response = await fetch(item.url);
-                  const arrayBuffer = await response.arrayBuffer();
+                console.log("[AIFD] Blob video detected, using poster image instead");
+                
+                // Try to find and convert the poster image
+                if (item.posterUrl && vidEl) {
+                  try {
+                    // Create an img element to load the poster
+                    const posterImg = new Image();
+                    posterImg.crossOrigin = "anonymous";
+                    
+                    await new Promise((resolve, reject) => {
+                      posterImg.onload = resolve;
+                      posterImg.onerror = reject;
+                      posterImg.src = item.posterUrl;
+                    });
 
-                  // Convert ArrayBuffer to Base64 for background transport.
-                  const base64Video = btoa(
-                    new Uint8Array(arrayBuffer)
-                      .reduce((data, byte) => data + String.fromCharCode(byte), "")
-                  );
+                    // Convert poster to base64
+                    const canvas = document.createElement("canvas");
+                    canvas.width = posterImg.naturalWidth;
+                    canvas.height = posterImg.naturalHeight;
+                    const ctx = canvas.getContext("2d");
 
-                  chrome.runtime.sendMessage({
-                    type: "SCAN_MEDIA_ITEMS",
-                    payload: {
-                      items: [{
-                        ...item,
-                        media_type: "video",
-                        media_url: item.posterUrl || null,
-                        videoData: base64Video,
-                        isVideo: true
-                      }],
-                      timestamp: Date.now()
+                    if (canvas.width > 0 && canvas.height > 0 && ctx) {
+                      ctx.drawImage(posterImg, 0, 0);
+                      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+
+                      // Send as IMAGE, not video
+                      chrome.runtime.sendMessage({
+                        type: "SCAN_MEDIA_ITEMS",
+                        payload: {
+                          items: [{
+                            hash: item.hash,
+                            media_type: "image", // Send as image!
+                            media_url: item.posterUrl,
+                            base64: dataUrl,
+                            isVideo: false // Treat as image
+                          }],
+                          timestamp: Date.now()
+                        }
+                      });
+                      continue;
                     }
-                  });
-                  continue;
-                } catch (err) {
-                  console.error("[AIFD] Failed to fetch video blob bytes:", err);
+                  } catch (err) {
+                    console.warn("[AIFD] Failed to convert poster to base64:", err);
+                  }
                 }
+                
+                // Fallback: if poster conversion fails, skip this item
+                console.warn("[AIFD] Skipping blob video (no poster available)");
+                continue;
               }
 
+              // Non-blob videos: send normally
               chrome.runtime.sendMessage({
                   type: "SCAN_MEDIA_ITEMS",
                   payload: {
                       items: [{ 
                           ...item, 
-                          media_type: "video", // Helps backend detection
-                          media_url: item.posterUrl || item.url,  // Prefer non-blob URL when available
+                          media_type: "video",
+                          media_url: item.posterUrl || item.url,
                           isVideo: true 
                       }],
                       timestamp: Date.now()

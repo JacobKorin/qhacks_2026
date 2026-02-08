@@ -528,6 +528,7 @@ def mock_detect():
     # 3. Processing Logic & Byte Extraction
     media_bytes = None
     if video_blob_data:
+        print("\n\n\n\nTHIS SHOULD NEVER PRINT\n\n\n\n\n")
         media_bytes = base64.b64decode(video_blob_data)
         source_for_hash = video_blob_data
     elif image_base64:
