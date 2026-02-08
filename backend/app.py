@@ -18,6 +18,8 @@ import requests
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from moviepy import VideoFileClip
+from google import genai
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +37,9 @@ AI_OR_NOT_API_KEY = os.getenv('AI_OR_NOT_API_KEY')
 AI_OR_NOT_IMAGE_API_URL = "https://api.aiornot.com/v2/image/sync"
 AI_OR_NOT_VIDEO_API_URL = "https://api.aiornot.com/v2/video/sync"
 QUOTA_LIMIT = int(os.getenv('QUOTA_LIMIT', '10'))
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # Quota management
 class QuotaManager:
@@ -220,6 +225,57 @@ def trim_video(input_path, max_duration=15):
             return output_path
     return input_path
 
+def _check_nsfw_with_gemini(media_bytes: bytes, media_type: str) -> bool:
+    """
+    Uses Gemini to determine if content is NSFW.
+    Returns True if NSFW, False otherwise.
+    """
+    if not gemini_client:
+        print("[AIFD][GEMINI] Skip: No API Key")
+        return False
+
+    # Define the strict prompt for deliberation
+    nsfw_prompt = (
+        "Analyze this content carefully. Check for explicit nudity, graphic violence, "
+        "or highly suggestive sexual content. Deliberate internally on whether this "
+        "violates standard 'Safe for Work' guidelines. "
+        "Respond ONLY with the word 'true' if it is NSFW (unsafe) or 'false' if it is SFW (safe)."
+    )
+
+    try:
+        mime_type = "video/mp4" if media_type == "video" else "image/jpeg"
+        
+        # For videos, we use the Upload API as suggested by docs
+        if media_type == "video":
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(media_bytes)
+                tmp_path = tmp.name
+            
+            # Upload to Gemini
+            myfile = gemini_client.files.upload(file=tmp_path)
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash", 
+                contents=[myfile, nsfw_prompt]
+            )
+            os.remove(tmp_path) # Clean up
+        else:
+            # For images, we send bytes directly
+            response = gemini_client.models.generate_content(
+                model='gemini-3-flash-preview',
+                contents=[
+                    types.Part.from_bytes(data=media_bytes, mime_type=mime_type),
+                    nsfw_prompt
+                ]
+            )
+
+        result_text = response.text.strip().lower()
+        print(f"[AIFD][GEMINI] NSFW Analysis: {result_text}")
+        
+        return "true" in result_text
+    except Exception as e:
+        print(f"[AIFD][GEMINI] Error: {str(e)}")
+        return False
+
 @app.get("/")
 def root():
     return jsonify(
@@ -337,11 +393,14 @@ def detect_image():
         is_ai, confidence = _normalize_aiornot_response(api_response)
         quota_manager.use_credit()
 
+        is_nsfw = _check_nsfw_with_gemini(media_bytes, "video" if is_video_type else "image")
+
         # 6. Response Construction (Matches your Mock structure)
         result = {
             "ok": True,
             "is_ai": is_ai,
             "confidence": confidence,
+            "nsfw": is_nsfw,
             "hash": media_hash,
             "media_type": "video" if is_video_type else "image",
             "quota": quota_manager.get_status()
@@ -453,13 +512,12 @@ def receive_image():
 @app.post("/mock/detect")
 def mock_detect():
     data = request.get_json(silent=True)
-    
     if data is None:
         return {"error": "Invalid JSON"}, 400
 
     # 1. Capture all possible keys
     image_base64 = data.get("base64") or data.get("image")
-    video_blob_data = data.get("video_data") # New key for raw bytes
+    video_blob_data = data.get("video_data")
     media_url = data.get("media_url") or data.get("url")
     is_video = data.get("isVideo") or data.get("media_type") == "video"
 
@@ -467,38 +525,54 @@ def mock_detect():
     if not image_base64 and not media_url and not video_blob_data:
         return jsonify({"ok": False, "error": "No media data provided"}), 400
 
-    # 3. Processing Logic
-    processing_time = 0
-    # Prioritize size calculation: Video Bytes > Image B64 > URL
+    # 3. Processing Logic & Byte Extraction
+    media_bytes = None
     if video_blob_data:
-        file_size_mb = len(video_blob_data) * 3 / 4 / (1024 * 1024)
+        media_bytes = base64.b64decode(video_blob_data)
         source_for_hash = video_blob_data
     elif image_base64:
-        file_size_mb = len(image_base64) * 3 / 4 / (1024 * 1024)
+        if "," in image_base64:
+            image_base64 = image_base64.split(',', 1)[1]
+        media_bytes = base64.b64decode(image_base64)
         source_for_hash = image_base64
-    else:
-        file_size_mb = 2.0 
-        source_for_hash = media_url
+    elif media_url:
+        # FIX: Actually fetch the data so Gemini has an image to look at
+        try:
+            print(f"[MOCK] Fetching remote URL for Gemini: {media_url[:50]}...")
+            resp = requests.get(media_url, timeout=10)
+            resp.raise_for_status()
+            media_bytes = resp.content
+            source_for_hash = media_url
+        except Exception as e:
+            print(f"[MOCK] Failed to fetch URL: {e}")
+            return jsonify({"ok": False, "error": f"URL fetch failed: {str(e)}"}), 400
 
+    # Simulate network delay for "processing"
     if is_video:
-        # Simulate longer processing for raw video bytes
-        processing_time = min(5, file_size_mb / 2)
-        print(f"[MOCK] Processing video... Mode: {'RAW BYTES' if video_blob_data else 'URL'}")
-        time.sleep(processing_time) 
-
+        time.sleep(1) # Videos feel heavier
+    
     # 4. Generate hash
     image_hash = hashlib.sha256(source_for_hash[:100].encode()).hexdigest()
 
-    # 5. Result Logic
+    # 5. Result Logic (MOCKED)
     is_ai = random.choice([True, False])
     confidence = random.uniform(85.0, 99.9) if random.random() > 0.2 else random.uniform(40.0, 60.0)
+
+    # --- THE MOCK NSFW LOGIC ---
+    # Choice A: Call the real Gemini (Use this if you have the credits and want to test the prompt)
+    # is_nsfw = _check_nsfw_with_gemini(media_bytes, "video" if is_video else "image")
+    # nsfw_status = _check_nsfw_with_gemini(media_bytes, "video" if is_video else "image")
+    # Choice B: Mock it (Return true 10% of the time for testing frontend UI)
+    is_nsfw = random.random() < 0.50 
+    print("NSFW RESULT: ", is_nsfw)
 
     return jsonify({
         "ok": True,
         "is_ai": is_ai,
         "confidence": round(confidence, 2),
+        "nsfw": is_nsfw,
         "is_video_processed": is_video,
-        "source_type": "blob" if video_blob_data else "url/b64",
+        "source_type": "blob" if video_blob_data else ("b64" if image_base64 else "url"),
         "hash": image_hash,
         "quota": quota_manager.get_status()
     })

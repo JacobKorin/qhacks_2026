@@ -18,6 +18,8 @@ window.AIFeedDetectorOverlay = (function() {
                 --aifd-warn: #b45309;
                 --aifd-warn-soft: #fef3c7;
             }
+
+            /* --- BADGE STYLES (Beside the post) --- */
             .aifd-badge-side {
                 position: absolute;
                 left: calc(100% + 15px);
@@ -28,93 +30,64 @@ window.AIFeedDetectorOverlay = (function() {
                 border-radius: 12px;
                 padding: 12px;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-                font-family: "Segoe UI", "Aptos", sans-serif;
-                z-index: 10001; /* High z-index to stay above video overlays */
+                font-family: "Segoe UI", sans-serif;
+                z-index: 10001;
                 animation: aifd-fade-in 0.4s ease-out;
                 display: flex;
                 flex-direction: column;
                 gap: 4px;
-                pointer-events: auto;
             }
-            .aifd-badge-header { 
-                font-size: 11px; 
-                font-weight: 700; 
-                text-transform: uppercase; 
-                display: block; 
-            }
-            .aifd-badge-score { 
-                font-size: 18px; 
-                font-weight: 800; 
-                color: var(--aifd-ink); 
-                display: block; 
-            }
-            .aifd-badge-status {
-                margin-top: 4px;
-                padding: 4px 8px;
-                border-radius: 6px;
-                font-size: 11px;
-                font-weight: 600;
-                text-align: center;
-                border: 1px solid transparent;
-            }
+            .aifd-badge-header { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+            .aifd-badge-score { font-size: 18px; font-weight: 800; color: var(--aifd-ink); }
+            .aifd-badge-status { margin-top: 4px; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-align: center; border: 1px solid transparent; }
             
-            /* Prediction Colors */
             .is-ai { color: var(--aifd-error); }
             .is-human { color: var(--aifd-accent); }
             .is-warn { color: var(--aifd-warn); }
-
-            /* Background/Indicator Colors */
             .bg-ai { background: var(--aifd-error-soft); color: #991b1b; border-color: #fecaca; }
             .bg-human { background: var(--aifd-accent-soft); color: #134e4a; border-color: #99f6e4; }
             .bg-warn { background: var(--aifd-warn-soft); color: #92400e; border-color: #fde68a; }
 
-            .aifd-aggregate-badge {
-                position: fixed;
-                top: 14px;
-                right: 14px;
-                width: 220px;
-                background: var(--aifd-card);
-                border: 1px solid var(--aifd-line);
-                border-radius: 12px;
-                padding: 12px;
-                box-shadow: 0 8px 18px rgba(0,0,0,0.16);
-                font-family: "Segoe UI", "Aptos", sans-serif;
-                z-index: 2147483647;
-                display: flex;
+            /* --- NSFW OVERLAY STYLES (Covers the image) --- */
+            .aifd-nsfw-overlay {
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+                background: rgba(5, 5, 5, 0.96) !important; /* Deep black blur */
+                backdrop-filter: blur(25px);
+                -webkit-backdrop-filter: blur(25px);
+                display: flex !important; 
                 flex-direction: column;
-                gap: 6px;
+                align-items: center; 
+                justify-content: center;
+                z-index: 2147483647 !important; /* Max Z-Index to force top */
+                border-radius: inherit;
+                color: white;
+                font-family: system-ui, -apple-system, sans-serif;
+                transition: opacity 0.3s ease;
+                overflow: hidden;
             }
-
-            .aifd-aggregate-title {
-                font-size: 11px;
-                font-weight: 700;
-                text-transform: uppercase;
-                letter-spacing: 0.02em;
-                color: var(--aifd-muted);
-            }
-
-            .aifd-aggregate-score {
-                font-size: 28px;
-                line-height: 1;
-                font-weight: 800;
-                color: var(--aifd-ink);
-            }
-
-            .aifd-aggregate-meta {
-                font-size: 12px;
-                color: var(--aifd-muted);
-            }
-
-            .aifd-aggregate-status {
-                margin-top: 4px;
-                padding: 6px 8px;
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: 700;
-                border: 1px solid transparent;
-                text-align: center;
-            }
+            .aifd-nsfw-content { text-align: center; padding: 20px; pointer-events: auto; }
+            .aifd-nsfw-icon { font-size: 40px; margin-bottom: 12px; display: block; }
+            .aifd-nsfw-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; color: #fff; }
+            .aifd-nsfw-text { font-size: 12px; opacity: 0.8; margin-bottom: 20px; max-width: 200px; line-height: 1.4; }
             
+            .aifd-reveal-btn {
+                background: white; 
+                color: black; 
+                border: none;
+                padding: 10px 24px; 
+                border-radius: 25px;
+                font-weight: 700; 
+                cursor: pointer;
+                transition: all 0.2s ease;
+                min-width: 140px;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            }
+            .aifd-reveal-btn:hover { background: var(--aifd-error); color: white; transform: scale(1.05); }
+
             @keyframes aifd-fade-in {
                 from { opacity: 0; transform: translateX(-10px); }
                 to { opacity: 1; transform: translateX(0); }
@@ -124,93 +97,101 @@ window.AIFeedDetectorOverlay = (function() {
     }
 
     return {
-        renderBadgeOnImage: function(hash, isAI, score) {
-            // UPDATED: Now searches for ANY element (img or video) with the hash
+        renderBadgeOnImage: function(hash, isAI, score, nsfw = false) {
+            // 1. DATA SANITIZATION
+            // Ensure nsfw is strictly boolean true. Handles string "true" or undefined/null.
+            const isNSFW = (nsfw === true || nsfw === "true");
+
+            // 2. FIND ELEMENTS
             const mediaElement = document.querySelector(`[data-aifd-hash="${hash}"]`);
+            if (!mediaElement) return;
+
+            // Strategy: 
+            // - Attach OVERLAY to the immediate wrapper (to cover image perfectly).
+            // - Attach BADGE to the article/post container (to sit to the side).
             
-            if (!mediaElement) {
-                console.warn(`[AIFD] Target media for hash ${hash} not found in DOM.`);
-                return;
+            const wrapper = mediaElement.parentElement;
+            const postContainer = mediaElement.closest('article') || 
+                                mediaElement.closest('div._as9-') || 
+                                wrapper;
+
+            console.log(`[AIFD] Rendering | Hash: ${hash} | AI: ${isAI} | NSFW: ${isNSFW}`);
+
+            // 3. APPLY NSFW OVERLAY (To Wrapper)
+            if (isNSFW && wrapper) {
+                // Ensure wrapper can accept absolute children
+                const computed = window.getComputedStyle(wrapper);
+                if (computed.position === 'static') {
+                    wrapper.style.position = 'relative';
+                }
+                this.applyNSFWCover(wrapper);
             }
 
-            const postContainer = mediaElement.closest('article') || 
-                    mediaElement.closest('div[role="menuitem"]') || 
-                    mediaElement.parentElement;
-            if (!postContainer) return;
+            // 4. RENDER BADGE (To Post Container)
+            if (postContainer) {
+                // Ensure container handles the side badge
+                if (window.getComputedStyle(postContainer).position === 'static') {
+                    postContainer.style.position = 'relative';
+                }
 
-            postContainer.style.overflow = 'visible';
-            postContainer.style.position = 'relative';
+                const existingBadge = postContainer.querySelector('.aifd-badge-side');
+                if (existingBadge) existingBadge.remove();
 
-            // Remove existing badge if present to allow for updates/re-scans
-            const existing = postContainer.querySelector('.aifd-badge-side');
-            if (existing) existing.remove();
+                let displayScore = score > 1 ? score : score * 100;
+                const formattedScore = displayScore.toFixed(1);
+                const mainLabel = isAI ? 'AI Generated' : 'Not AI Generated';
+                const colorClass = (displayScore < 65) ? 'is-warn' : (isAI ? 'is-ai' : 'is-human');
+                const bgClass = (displayScore < 65) ? 'bg-warn' : (isAI ? 'bg-ai' : 'bg-human');
 
-            // --- Math Logic ---
-            let displayScore = score > 1 ? score : score * 100;
-            const formattedScore = displayScore.toFixed(1);
+                const badge = document.createElement('div');
+                badge.className = 'aifd-badge-side';
+                badge.innerHTML = `
+                    <span class="aifd-badge-header ${colorClass}">Confidence</span>
+                    <span class="aifd-badge-score">${formattedScore}%</span>
+                    <div class="aifd-badge-status ${bgClass}">${mainLabel}</div>
+                `;
+                postContainer.appendChild(badge);
+            }
+        },
 
-            // --- Label Logic ---
-            const mainLabel = isAI ? 'AI Generated' : 'Not AI Generated';
-            
-            const colorClass = (displayScore < 65) ? 'is-warn' : (isAI ? 'is-ai' : 'is-human');
-            const bgClass = (displayScore < 65) ? 'bg-warn' : (isAI ? 'bg-ai' : 'bg-human');
+        applyNSFWCover: function(container) {
+            // Avoid duplicates
+            if (container.querySelector('.aifd-nsfw-overlay')) return;
 
-            const badge = document.createElement('div');
-            badge.className = 'aifd-badge-side';
-            badge.innerHTML = `
-                <span class="aifd-badge-header ${colorClass}">Confidence</span>
-                <span class="aifd-badge-score">${formattedScore}%</span>
-                <div class="aifd-badge-status ${bgClass}">
-                    ${mainLabel}
+            const overlay = document.createElement('div');
+            overlay.className = 'aifd-nsfw-overlay';
+            overlay.innerHTML = `
+                <div class="aifd-nsfw-content">
+                    <span class="aifd-nsfw-icon">🔞</span>
+                    <div class="aifd-nsfw-title">Sensitive Content</div>
+                    <div class="aifd-nsfw-text">
+                        Gemini AI flagged this media as potentially NSFW.
+                    </div>
+                    <button class="aifd-reveal-btn">Show Content</button>
                 </div>
             `;
-            postContainer.appendChild(badge);
-            console.log(`[AIFD] Badge rendered for ${mediaElement.tagName} (${hash.substring(0,8)})`);
-        },
 
-        renderAggregateBadge: function(options) {
-            const averageScore = Math.max(0, Math.min(100, Number(options?.averageScore || 0)));
-            const uniqueScannedCount = Math.max(
-                0,
-                Number(options?.uniqueScannedCount ?? options?.totalCount ?? 0)
-            );
-            const selectedCount = Math.max(
-                0,
-                Number(options?.selectedCount ?? uniqueScannedCount)
-            );
-            const aiLikelyCount = Math.max(0, Number(options?.aiLikelyCount || 0));
+            const btn = overlay.querySelector('.aifd-reveal-btn');
+            
+            // Hover logic
+            btn.addEventListener('mouseenter', () => { btn.textContent = "Are you sure?"; });
+            btn.addEventListener('mouseleave', () => { btn.textContent = "Show Content"; });
 
-            let statusLabel = "Likely Human";
-            let statusClass = "bg-human";
-            if (averageScore >= 75) {
-                statusLabel = "Likely AI";
-                statusClass = "bg-ai";
-            } else if (averageScore >= 60) {
-                statusLabel = "Mixed / Unclear";
-                statusClass = "bg-warn";
-            }
+            // Click logic: Remove overlay
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                overlay.style.opacity = '0';
+                setTimeout(() => overlay.remove(), 300);
+            });
+            
+            // Prevent clicks on the overlay from opening the post/image
+            overlay.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+            });
 
-            let badge = document.getElementById("aifd-aggregate-badge");
-            if (!badge) {
-                badge = document.createElement("div");
-                badge.id = "aifd-aggregate-badge";
-                badge.className = "aifd-aggregate-badge";
-                document.body.appendChild(badge);
-            }
-
-            badge.innerHTML = `
-                <span class="aifd-aggregate-title">Selection Average</span>
-                <span class="aifd-aggregate-score">${averageScore.toFixed(1)}%</span>
-                <span class="aifd-aggregate-meta">Selected: ${selectedCount} | Scanned: ${uniqueScannedCount} | AI-likely: ${aiLikelyCount}</span>
-                <div class="aifd-aggregate-status ${statusClass}">${statusLabel}</div>
-            `;
-        },
-
-        clearAggregateBadge: function() {
-            const badge = document.getElementById("aifd-aggregate-badge");
-            if (badge) {
-                badge.remove();
-            }
+            container.appendChild(overlay);
         }
     };
 })();

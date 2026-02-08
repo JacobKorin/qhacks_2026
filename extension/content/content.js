@@ -393,7 +393,8 @@
     window.AIFeedDetectorOverlay.renderBadgeOnImage(
       payload.hash,
       payload.isAI,
-      payload.score
+      payload.score,
+      payload.nsfw
     );
   }
 
@@ -574,7 +575,7 @@
 
       console.log("%c[AI Feed Detector] RESPONSE RECEIVED FROM BACKEND:", "color: #00ff00; font-weight: bold;", payload);
       
-      const { hash, score, isAI, url } = payload;
+      const { hash, score, isAI, url, nsfw } = payload;
 
       let target = document.querySelector(`[data-aifd-hash="${hash}"]`);
 
@@ -597,7 +598,7 @@
       return true;
     }
 
-      const badgePayload = { hash, score, isAI };
+      const badgePayload = { hash, score, isAI, nsfw };
       detectionResultsByHash.set(hash, badgePayload);
       
       // FIX 1: Add risk rail marker for AI posts

@@ -79,11 +79,14 @@ async function isExtensionEnabled() {
 function normalizeDetectionResult(item, result) {
   const score = Number(result?.score ?? 0);
   const isAI = typeof result?.isAI === "boolean" ? result.isAI : score >= FLAG_THRESHOLD;
+  const nsfwRaw = result?.nsfw;
+  const nsfw = (nsfwRaw === true || nsfwRaw === "true");
 
   return {
     hash: item.hash,
     score,
     isAI,
+    nsfw: nsfw
   };
 }
 
@@ -101,7 +104,8 @@ async function processOneItem(item, tabId) {
       console.log(`[AI Feed Detector] Cache hit: ${item.hash}`);
     } else {
       console.log(`[AI Feed Detector] Cache miss: ${item.hash} (calling backend)`);
-      normalizedResult = normalizeDetectionResult(item, await detectAIContent(item));
+      const flaskResponse = await detectAIContent(item);
+      normalizedResult = normalizeDetectionResult(item, flaskResponse);
       await setCachedDetection(item.hash, normalizedResult);
       await enqueueStatsUpdate(1, normalizedResult.isAI ? 1 : 0);
     }
@@ -113,6 +117,7 @@ async function processOneItem(item, tabId) {
         url: item.media_url || item.url,
         source: item.source || null,
         selectionId: item.selectionId || item.selection_id || null,
+        nsfw: normalizedResult.nsfw
       },
     });
   } catch (error) {
