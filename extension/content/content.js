@@ -404,6 +404,89 @@
     }
   }
 
+  async function loadImageThumbnailDataUrl(imageUrl) {
+    if (!imageUrl) {
+      return null;
+    }
+
+    const thumbnailImage = new Image();
+    thumbnailImage.crossOrigin = "anonymous";
+
+    await new Promise((resolve, reject) => {
+      thumbnailImage.onload = resolve;
+      thumbnailImage.onerror = reject;
+      thumbnailImage.src = imageUrl;
+    });
+
+    if (!thumbnailImage.naturalWidth || !thumbnailImage.naturalHeight) {
+      return null;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = thumbnailImage.naturalWidth;
+    canvas.height = thumbnailImage.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return null;
+    }
+
+    ctx.drawImage(thumbnailImage, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
+  function captureVideoFrameDataUrl(videoElement) {
+    if (!(videoElement instanceof HTMLVideoElement)) {
+      return null;
+    }
+
+    const width = videoElement.videoWidth || videoElement.clientWidth || 0;
+    const height = videoElement.videoHeight || videoElement.clientHeight || 0;
+    if (!width || !height) {
+      return null;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return null;
+    }
+
+    ctx.drawImage(videoElement, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
+  async function getBlobVideoThumbnail(item, videoElement) {
+    if (item.posterUrl) {
+      try {
+        const posterDataUrl = await loadImageThumbnailDataUrl(item.posterUrl);
+        if (posterDataUrl) {
+          return {
+            dataUrl: posterDataUrl,
+            mediaUrl: item.posterUrl,
+          };
+        }
+      } catch (error) {
+        console.warn("[AIFD] Failed to load blob poster image:", error);
+      }
+    }
+
+    try {
+      const frameDataUrl = captureVideoFrameDataUrl(videoElement);
+      if (frameDataUrl) {
+        return {
+          dataUrl: frameDataUrl,
+          mediaUrl: null,
+        };
+      }
+    } catch (error) {
+      console.warn("[AIFD] Failed to capture blob video frame:", error);
+    }
+
+    return null;
+  }
+
   try {
     await loadSettings();
     subscribeSettingsChanges();
@@ -440,81 +523,53 @@
             if (item.type === "video") {
               const vidEl = post.querySelector("video");
               if (vidEl) {
-                  vidEl.setAttribute("data-aifd-hash", item.hash);
+                vidEl.setAttribute("data-aifd-hash", item.hash);
               }
 
-              // SHORT CIRCUIT: If blob video, convert poster image to base64 and send as image
+              // Blob videos are scanned as image thumbnails to avoid blob video parsing issues.
               if (item.url.startsWith("blob:")) {
-                console.log("[AIFD] Blob video detected, using poster image instead");
-                
-                // Try to find and convert the poster image
-                if (item.posterUrl && vidEl) {
-                  try {
-                    // Create an img element to load the poster
-                    const posterImg = new Image();
-                    posterImg.crossOrigin = "anonymous";
-                    
-                    await new Promise((resolve, reject) => {
-                      posterImg.onload = resolve;
-                      posterImg.onerror = reject;
-                      posterImg.src = item.posterUrl;
-                    });
+                console.log("[AIFD] Blob video detected, using thumbnail image instead");
+                const thumbnail = await getBlobVideoThumbnail(item, vidEl);
 
-                    // Convert poster to base64
-                    const canvas = document.createElement("canvas");
-                    canvas.width = posterImg.naturalWidth;
-                    canvas.height = posterImg.naturalHeight;
-                    const ctx = canvas.getContext("2d");
-
-                    if (canvas.width > 0 && canvas.height > 0 && ctx) {
-                      ctx.drawImage(posterImg, 0, 0);
-                      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-
-                      // Send as IMAGE, not video
-                      chrome.runtime.sendMessage({
-                        type: "SCAN_MEDIA_ITEMS",
-                        payload: {
-                          items: [{
-                            hash: item.hash,
-                            type: "image", // Treat as image
-                            media_type: "image", // Send as image!
-                            media_url: item.posterUrl,
-                            base64: dataUrl,
-                            isVideo: false // Treat as image
-                          }],
-                          timestamp: Date.now()
-                        }
-                      });
-                      continue;
-                    }
-                  } catch (err) {
-                    console.warn("[AIFD] Failed to convert poster to base64:", err);
-                  }
+                if (!thumbnail || !thumbnail.dataUrl) {
+                  console.warn("[AIFD] Skipping blob video (thumbnail unavailable)");
+                  continue;
                 }
-                
-                // Fallback: if poster conversion fails, skip this item
-                console.warn("[AIFD] Skipping blob video (no poster available)");
+
+                chrome.runtime.sendMessage({
+                  type: "SCAN_MEDIA_ITEMS",
+                  payload: {
+                    items: [{
+                      hash: item.hash,
+                      type: "image",
+                      media_type: "image",
+                      media_url: thumbnail.mediaUrl,
+                      base64: thumbnail.dataUrl,
+                      isVideo: false,
+                    }],
+                    timestamp: Date.now(),
+                  },
+                });
                 continue;
               }
 
               // Non-blob videos: send normally (explicit payload to avoid leaking blob URLs)
               chrome.runtime.sendMessage({
-                  type: "SCAN_MEDIA_ITEMS",
-                  payload: {
-                      items: [{ 
-                          hash: item.hash,
-                          type: item.type,
-                          media_type: "video",
-                          media_url: item.posterUrl || item.url,
-                          posterUrl: item.posterUrl,
-                          isVideo: true 
-                      }],
-                      timestamp: Date.now()
-                  }
+                type: "SCAN_MEDIA_ITEMS",
+                payload: {
+                  items: [{
+                    hash: item.hash,
+                    type: item.type,
+                    media_type: "video",
+                    media_url: item.posterUrl || item.url,
+                    posterUrl: item.posterUrl,
+                    isVideo: true,
+                  }],
+                  timestamp: Date.now(),
+                },
               });
               continue;
-          }
-
+            }
             let payloadItem = { ...item };
 
             try {
@@ -655,3 +710,5 @@
     return true;
   });
 })();
+
+

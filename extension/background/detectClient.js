@@ -4,7 +4,12 @@ export async function detectAIContent(mediaItem) {
     const API_URL = "http://localhost:3500/mock/detect";
 
     try {
-        const mediaType = mediaItem.type === "video" || mediaItem.isVideo ? "video" : "image";
+        const explicitMediaType =
+            mediaItem.media_type === "video" || mediaItem.media_type === "image"
+                ? mediaItem.media_type
+                : null;
+        const mediaType = explicitMediaType
+            || (mediaItem.isVideo === true ? "video" : (mediaItem.type === "video" ? "video" : "image"));
         
         // Extract media_url but NEVER send blob URLs
         let mediaUrl = mediaItem.url || mediaItem.media_url || null;
